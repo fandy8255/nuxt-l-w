@@ -141,6 +141,10 @@ export default {
 
 			if (request.method === "POST") {
 
+				if(pathname === '/test'){
+
+				}
+
 				if (pathname === "/api/user") {
 					//console.log('arrived to post req for user')
 					try {
@@ -611,11 +615,6 @@ export default {
 					}
 
 				}
-
-				if(pathname === '/test'){
-					
-				}
-
 
 				if (pathname === '/api/followers') {
 					try {

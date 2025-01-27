@@ -582,8 +582,6 @@ export default {
 				}
 
 
-
-
 			} else {
 
 
@@ -626,7 +624,7 @@ export default {
 
 						// Fetch followers
 						const followersResults = await env.DB.prepare(`
-						SELECT u.username 
+						SELECT u.username
 						FROM followers f
 						JOIN users u ON f.follower_id = u.id
 						WHERE f.followed_id = ?
@@ -655,7 +653,7 @@ export default {
 
 						// Fetch followed users
 						const followedResults = await env.DB.prepare(`
-							SELECT u.username 
+							SELECT u.username
 							FROM followers f
 							JOIN users u ON f.followed_id = u.id
 							WHERE f.follower_id = ?
@@ -775,8 +773,8 @@ export default {
 
 						// Verify if the user belongs to the thread
 						const { results: thread } = await env.DB.prepare(`
-						SELECT sender, receiver 
-						FROM threads 
+						SELECT sender, receiver
+						FROM threads
 						WHERE thread_id = ? AND is_deleted = 0
 					  `).bind(threadId).all();
 
@@ -793,7 +791,7 @@ export default {
 
 						// Fetch messages and user details
 						const { results: messages } = await env.DB.prepare(`
-						SELECT 
+						SELECT
 						  m.message_id,
 						  m.content,
 						  m.created_at,

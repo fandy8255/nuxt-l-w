@@ -141,9 +141,6 @@ export default {
 
 			if (request.method === "POST") {
 
-				if(pathname === '/test'){
-
-				}
 
 				if (pathname === "/api/user") {
 					//console.log('arrived to post req for user')
@@ -335,19 +332,21 @@ export default {
 							const mainImageUrl = imageUrls[0];
 
 							// Insert product into the products table
+							const productId = crypto.randomUUID();
+
 							const productQuery = `
-								INSERT INTO products (product_name, product_price, product_description, product_category, product_url, user_id)
-								VALUES (?, ?, ?, ?, ?, ?)
+								INSERT INTO products (id, product_name, product_price, product_description, product_category, product_url, user_id)
+								VALUES (?, ?, ?, ?, ?, ?, ?)
 								RETURNING id`;
 							const productResponse = await env.DB.prepare(productQuery)
-								.bind(productName, productPrice, productDescription, productCategory, mainImageUrl, userId)
+								.bind(productId, productName, productPrice, productDescription, productCategory, mainImageUrl, userId)
 								.first();
 
 							if (!productResponse || !productResponse.id) {
 								throw new Error('Failed to insert product into database');
 							}
 
-							productId = productResponse.id;
+							//productId = productResponse.id;
 
 							// Associate each product image with the newly created product
 							for (const imageId of insertedImageIds) {

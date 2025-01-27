@@ -9,10 +9,8 @@ CREATE TABLE users (
 	ubicacion TEXT NOT NULL,
     age INTEGER NOT NULL,
 	verified INTEGER DEFAULT 0
+	is_admin BOOLEAN DEFAULT 0
 );
-
-ALTER TABLE users
-ADD COLUMN is_admin BOOLEAN DEFAULT 0
 
 -- Create the 'products' table
 CREATE TABLE products (

@@ -1,5 +1,14 @@
 
-
+CREATE TABLE products (
+    id TEXT PRIMARY KEY, -- Auto-incrementing unique ID for each product
+    product_name TEXT NOT NULL,           -- Name of the product
+    product_price INTEGER NOT NULL,
+    product_description TEXT ,
+    product_category TEXT NOT NULL,
+    product_url TEXT NOT NULL,            -- URL of the product
+    user_id INTEGER NOT NULL,           -- Foreign key referencing the seller ID
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
 
 /*CREATE TABLE followers (
     id UUID PRIMARY KEY,

@@ -1,5 +1,17 @@
 
-CREATE TABLE products (
+CREATE TABLE product_likes (
+    id TEXT PRIMARY KEY ,        -- Unique identifier for each like record
+    liked_product TEXT NOT NULL,                         -- The product that is liked
+    liked_by TEXT NOT NULL,                              -- The user who liked the product
+    liked_product_belongs_to TEXT NOT NULL,             -- The user who owns the product
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,      -- Timestamp of when the like action occurred
+    FOREIGN KEY (liked_product) REFERENCES products(id) ON DELETE CASCADE,
+    FOREIGN KEY (liked_by) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (liked_product_belongs_to) REFERENCES users(id) ON DELETE CASCADE,
+    UNIQUE (liked_product, liked_by)                    -- Ensure no duplicate likes for the same product by the same user
+);
+
+/*CREATE TABLE products (
     id TEXT PRIMARY KEY, -- Auto-incrementing unique ID for each product
     product_name TEXT NOT NULL,           -- Name of the product
     product_price INTEGER NOT NULL,
@@ -8,7 +20,7 @@ CREATE TABLE products (
     product_url TEXT NOT NULL,            -- URL of the product
     user_id INTEGER NOT NULL,           -- Foreign key referencing the seller ID
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-);
+);*/
 
 /*CREATE TABLE followers (
     id UUID PRIMARY KEY,

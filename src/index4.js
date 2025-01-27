@@ -930,30 +930,25 @@ export default {
 							console.log('product id is', productId)
 							query = `
 								SELECT
-								p.id AS product_id,
-								p.product_name,
-								p.product_price,
-								p.product_description,
-								p.product_category,
-								p.product_url AS main_image_url,
-								u.id AS owner_id,
-								u.username AS owner_username,
-								u.profile_picture AS profile_picture,
-								pi.id AS image_id,
-								pi.image_url,
-								COUNT(pl.id) AS like_count
-							FROM
-								products p
-							JOIN
-								users u ON p.user_id = u.id
-							LEFT JOIN
-								product_images pi ON pi.product_id = p.id
-							LEFT JOIN
-								product_likes pl ON pl.liked_product = p.id
-							WHERE
-								p.id = ?
-							GROUP BY
-								p.id, u.id, pi.id;`;
+									p.id AS product_id,
+									p.product_name,
+									p.product_price,
+									p.product_description,
+									p.product_category,
+									p.product_url AS main_image_url,
+									u.id AS owner_id,
+									u.username AS owner_username,
+									u.profile_picture AS profile_picture,
+									pi.id AS image_id,
+									pi.image_url
+								FROM
+									products p
+								JOIN
+									users u ON p.user_id = u.id
+								LEFT JOIN
+									product_images pi ON pi.product_id = p.id
+								WHERE
+									p.id = ?`;
 
 							// Execute the query with the provided product_id
 							let result = await env.DB.prepare(query).bind(productId).all();
@@ -967,6 +962,7 @@ export default {
 								});
 							}
 							console.log('got query for prodid', result)
+
 							// Transform the results into a structured object
 
 							results = {
@@ -976,7 +972,6 @@ export default {
 								product_description: result.results[0].product_description,
 								product_category: result.results[0].product_category,
 								main_image_url: result.results[0].main_image_url,
-								like_count: result.results[0].like_count,
 								owner: {
 									id: result.results[0].owner_id,
 									username: result.results[0].owner_username,
@@ -996,8 +991,8 @@ export default {
 
 						} catch (error) {
 							console.error('results not found', error)
-							return new Response(JSON.stringify({error:error}), {
-								error:error,
+							return new Response('Product not found', {
+
 								status: 404,
 								headers: { ...corsHeaders },
 							});
@@ -1009,28 +1004,14 @@ export default {
 					if (userId) {
 
 						try {
-							query = `
-							SELECT
-								p.id AS product_id,
-								p.product_name,
-								p.product_price,
-								p.product_description,
-								p.product_category,
-								p.product_url AS main_image_url,
-								u.id AS owner_id,
-								u.username AS owner_username,
-								u.profile_picture AS profile_picture,
-								COUNT(pl.id) AS like_count
-							FROM
-								products p
-							JOIN
-								users u ON p.user_id = u.id
-							LEFT JOIN
-								product_likes pl ON pl.liked_product = p.id
-							WHERE
-								p.user_id = ?
-							GROUP BY
-								p.id, u.id;
+							query = `SELECT
+							products.*,
+							users.username,
+							users.profile_picture,
+							users.ubicacion
+							FROM products
+							INNER JOIN users ON products.user_id = users.id
+							WHERE products.user_id = ?;
       						`
 							results = await env.DB.prepare(query).bind(userId).all();
 
@@ -1040,8 +1021,7 @@ export default {
 
 						} catch (error) {
 							console.error('results not found', error)
-							return new Response(JSON.stringify({error:error}), {
-								error:error,
+							return new Response('Product not found', {
 								status: 404,
 								headers: { ...corsHeaders },
 							});
@@ -1052,24 +1032,12 @@ export default {
 						try {
 							query = `
 									SELECT
-										p.id AS product_id,
-										p.product_name,
-										p.product_price,
-										p.product_description,
-										p.product_category,
-										p.product_url AS main_image_url,
-										u.id AS owner_id,
-										u.username AS owner_username,
-										u.profile_picture AS profile_picture,
-										COUNT(pl.id) AS like_count
-									FROM
-										products p
-									JOIN
-										users u ON p.user_id = u.id
-									LEFT JOIN
-										product_likes pl ON pl.liked_product = p.id
-									GROUP BY
-										p.id, u.id;`
+									products.*,
+									users.username,
+									users.profile_picture,
+									users.ubicacion
+									FROM products
+									INNER JOIN users ON products.user_id = users.id;`
 
 							results = await env.DB.prepare(query).all();
 
@@ -1079,11 +1047,10 @@ export default {
 
 						} catch (error) {
 							console.error('results not found', error)
-							return new Response(JSON.stringify({error:error}), {
-								error:error,
+							return new Response('Product not found', {
 								status: 404,
 								headers: { ...corsHeaders },
-							});
+							})
 						}
 
 					}

@@ -11,6 +11,9 @@ CREATE TABLE users (
 	verified INTEGER DEFAULT 0
 );
 
+ALTER TABLE users
+ADD COLUMN is_admin BOOLEAN DEFAULT 0
+
 -- Create the 'products' table
 CREATE TABLE products (
     id INTEGER PRIMARY KEY AUTOINCREMENT, -- Auto-incrementing unique ID for each product

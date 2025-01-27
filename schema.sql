@@ -1,4 +1,7 @@
-CREATE TABLE followers (
+
+
+
+/*CREATE TABLE followers (
     id UUID PRIMARY KEY,
     follower_id TEXT NOT NULL,
     followed_id TEXT NOT NULL,
@@ -6,7 +9,7 @@ CREATE TABLE followers (
     FOREIGN KEY (follower_id) REFERENCES users(id) ON DELETE CASCADE,
     FOREIGN KEY (followed_id) REFERENCES users(id) ON DELETE CASCADE,
     UNIQUE (follower_id, followed_id)
-);
+);*/
 
 
 /*

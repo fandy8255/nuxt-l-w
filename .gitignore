@@ -168,5 +168,7 @@ dist
 
 # wrangler project
 
+wrangler.toml
 .dev.vars
 .wrangler/
+

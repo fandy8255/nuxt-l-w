@@ -169,26 +169,36 @@ export default {
 				}
 
 				if (pathname === '/api/user/check') { //check if user exists
-					const { username, email } = await request.json()
 
-					const queryCheckUsername = `SELECT id FROM users WHERE username = ?`;
-					const existingUser = await env.DB.prepare(queryCheckUsername).bind(username).first();
+					try {
 
-					const queryCheckEmail = `SELECT id FROM users WHERE email = ?`;
-					const existingEmail = await env.DB.prepare(queryCheckEmail).bind(email).first();
+						const { username, email } = await request.json()
 
-					if (existingUser || existingEmail) {
-						return new Response(JSON.stringify({ error: 'El nombre de usuario o correo ya está en uso.' }), {
-							status: 400,
-							headers: { ...corsHeaders },
+						const queryCheckUsername = `SELECT id FROM users WHERE username = ?`;
+						const existingUser = await env.DB.prepare(queryCheckUsername).bind(username).first();
+
+						const queryCheckEmail = `SELECT id FROM users WHERE email = ?`;
+						const existingEmail = await env.DB.prepare(queryCheckEmail).bind(email).first();
+
+						if (existingUser || existingEmail) {
+							return new Response(JSON.stringify({ error: 'El nombre de usuario o correo ya está en uso.' }), {
+								status: 400,
+								headers: { ...corsHeaders },
+							}
+							);
 						}
-						);
+
+						return new Response(JSON.stringify({ success: true }), {
+							status: 200,
+							headers: { ...corsHeaders },
+						});
+
+
+					} catch (error) {
+						console.error('error with registrar', error)
+
 					}
 
-					return new Response(JSON.stringify({ success: true }), {
-						status: 200,
-						headers: { ...corsHeaders },
-					});
 
 				}
 
@@ -271,6 +281,7 @@ export default {
 					let user_type = obj.user_type;
 
 					const userId = user.id;
+					const profile_picture=user.profile_picture
 					const sameEmail = obj.email === user.email;
 					const userIsSeller = user_type === 'seller';
 
@@ -368,7 +379,10 @@ export default {
 								product_description: productDescription,
 								product_category: productCategory,
 								product_url: mainImageUrl,
-								username: username
+								user_id:userId,
+								username: username,
+								profile_picture:profile_picture,
+								like_count:0
 							}
 
 							return new Response(JSON.stringify({ success: true, product: prodObj }), {
@@ -447,6 +461,82 @@ export default {
 						});
 					}
 
+				}
+
+				if (pathname === '/api/report') {
+					try {
+						// Parse the incoming request
+						const { product_id, reporter_id, reported_id, report_reason } = await request.json();
+
+						console.log('Reporting product:', product_id, 'by user:', reporter_id);
+
+						// Check if the reporter has already reported this product
+						const existingReportQuery = `
+							SELECT COUNT(*) as count
+							FROM reports
+							WHERE product_id = ? AND reporter_id = ?`;
+
+						const existingReportResult = await env.DB.prepare(existingReportQuery)
+							.bind(product_id, reporter_id)
+							.first();
+
+						if (existingReportResult.count > 0) {
+							return new Response(JSON.stringify({ success: false, message: 'User has already reported this product.' }), {
+								status: 400,
+								headers: { ...corsHeaders },
+							});
+						}
+
+						// Insert the new report
+						const insertReportQuery = `
+							INSERT INTO reports (id, product_id, reporter_id, reported_id, report_reason)
+							VALUES (?, ?, ?, ?, ?)`;
+
+						await env.DB.prepare(insertReportQuery)
+							.bind(crypto.randomUUID(), product_id, reporter_id, reported_id, report_reason)
+							.run();
+
+						// Check the total number of reports for the product
+						const reportCountQuery = `
+							SELECT COUNT(*) as count
+							FROM reports
+							WHERE product_id = ?`;
+
+						const reportCountResult = await env.DB.prepare(reportCountQuery)
+							.bind(product_id)
+							.first();
+
+						const reportCount = reportCountResult.count;
+
+						console.log('Total reports for product:', product_id, 'are:', reportCount);
+
+						// If the report count reaches 2, mark the product as not visible
+						if (reportCount >= 2) {
+							const updateProductQuery = `
+								UPDATE products
+								SET is_visible = 0
+								WHERE id = ?`;
+
+							await env.DB.prepare(updateProductQuery)
+								.bind(product_id)
+								.run();
+
+							console.log('Product', product_id, 'has been marked as not visible due to multiple reports.');
+						}
+
+						return new Response(JSON.stringify({ success: true, message: 'Report submitted successfully.' }), {
+							status: 200,
+							headers: { ...corsHeaders },
+						});
+
+					} catch (error) {
+						console.error('Error handling report:', error);
+
+						return new Response(JSON.stringify({ success: false, message: 'Error handling the report.' }), {
+							status: 500,
+							headers: { ...corsHeaders },
+						});
+					}
 				}
 
 				if (pathname === '/api/like') {
@@ -771,7 +861,7 @@ export default {
 
 						// Query to fetch liked products
 						const likedProductsResults = await env.DB.prepare(`
-							SELECT p.id AS product_id, p.name AS product_name, p.user_id AS owner_id, u.username AS owner_username
+							SELECT p.id AS product_id, p.product_name AS product_name, p.user_id AS owner_id, u.username AS owner_username
 							FROM product_likes pl
 							JOIN products p ON pl.liked_product = p.id
 							JOIN users u ON p.owner_id = u.id
@@ -930,15 +1020,15 @@ export default {
 							console.log('product id is', productId)
 							query = `
 								SELECT
-								p.id AS product_id,
+								p.id,
 								p.product_name,
 								p.product_price,
 								p.product_description,
 								p.product_category,
-								p.product_url AS main_image_url,
-								u.id AS owner_id,
-								u.username AS owner_username,
-								u.profile_picture AS profile_picture,
+								p.product_url,
+								u.id AS user_id,
+								u.username,
+								u.profile_picture,
 								pi.id AS image_id,
 								pi.image_url,
 								COUNT(pl.id) AS like_count
@@ -970,18 +1060,17 @@ export default {
 							// Transform the results into a structured object
 
 							results = {
-								product_id: result.results[0].product_id,
+								id: result.results[0].id,
 								product_name: result.results[0].product_name,
 								product_price: result.results[0].product_price,
 								product_description: result.results[0].product_description,
 								product_category: result.results[0].product_category,
-								main_image_url: result.results[0].main_image_url,
+								product_url: result.results[0].product_url,
 								like_count: result.results[0].like_count,
-								owner: {
-									id: result.results[0].owner_id,
-									username: result.results[0].owner_username,
-									profile_picture: result.results[0].profile_picture,
-								},
+								user_id: result.results[0].user_id,
+								username: result.results[0].username,
+								profile_picture: result.results[0].profile_picture
+								,
 								images: result.results.map(row => ({
 									image_id: row.image_id,
 									image_url: row.image_url,
@@ -996,8 +1085,8 @@ export default {
 
 						} catch (error) {
 							console.error('results not found', error)
-							return new Response(JSON.stringify({error:error}), {
-								error:error,
+							return new Response(JSON.stringify({ error: error }), {
+								error: error,
 								status: 404,
 								headers: { ...corsHeaders },
 							});
@@ -1011,15 +1100,15 @@ export default {
 						try {
 							query = `
 							SELECT
-								p.id AS product_id,
+								p.id,
 								p.product_name,
 								p.product_price,
 								p.product_description,
 								p.product_category,
-								p.product_url AS main_image_url,
-								u.id AS owner_id,
-								u.username AS owner_username,
-								u.profile_picture AS profile_picture,
+								p.product_url,
+								u.id AS user_id,
+								u.username,
+								u.profile_picture,
 								COUNT(pl.id) AS like_count
 							FROM
 								products p
@@ -1040,8 +1129,8 @@ export default {
 
 						} catch (error) {
 							console.error('results not found', error)
-							return new Response(JSON.stringify({error:error}), {
-								error:error,
+							return new Response(JSON.stringify({ error: error }), {
+								error: error,
 								status: 404,
 								headers: { ...corsHeaders },
 							});
@@ -1052,15 +1141,15 @@ export default {
 						try {
 							query = `
 									SELECT
-										p.id AS product_id,
+										p.id,
 										p.product_name,
 										p.product_price,
 										p.product_description,
 										p.product_category,
-										p.product_url AS main_image_url,
-										u.id AS owner_id,
-										u.username AS owner_username,
-										u.profile_picture AS profile_picture,
+										p.product_url,
+										u.id AS user_id,
+										u.username,
+										u.profile_picture,
 										COUNT(pl.id) AS like_count
 									FROM
 										products p
@@ -1079,8 +1168,8 @@ export default {
 
 						} catch (error) {
 							console.error('results not found', error)
-							return new Response(JSON.stringify({error:error}), {
-								error:error,
+							return new Response(JSON.stringify({ error: error }), {
+								error: error,
 								status: 404,
 								headers: { ...corsHeaders },
 							});

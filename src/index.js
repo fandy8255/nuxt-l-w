@@ -1136,7 +1136,7 @@ export default {
 							SELECT p.id AS product_id, p.product_name AS product_name, p.user_id AS owner_id, u.username AS owner_username
 							FROM product_likes pl
 							JOIN products p ON pl.liked_product = p.id
-							JOIN users u ON p.owner_id = u.id
+							JOIN users u ON p.user_id = u.id
 							WHERE pl.liked_by = ?
 						`).bind(userId).all();
 

@@ -281,7 +281,7 @@ export default {
 					let user_type = obj.user_type;
 
 					const userId = user.id;
-					const profile_picture=user.profile_picture
+					const profile_picture = user.profile_picture
 					const sameEmail = obj.email === user.email;
 					const userIsSeller = user_type === 'seller';
 
@@ -379,10 +379,10 @@ export default {
 								product_description: productDescription,
 								product_category: productCategory,
 								product_url: mainImageUrl,
-								user_id:userId,
+								user_id: userId,
 								username: username,
-								profile_picture:profile_picture,
-								like_count:0
+								profile_picture: profile_picture,
+								like_count: 0
 							}
 
 							return new Response(JSON.stringify({ success: true, product: prodObj }), {
@@ -610,21 +610,35 @@ export default {
 					const uuid = crypto.randomUUID();
 
 					const query = `
-					INSERT INTO followers (id, follower_id, followed_id)
-					SELECT ?, u1.id, u2.id
-					FROM users u1, users u2
-					WHERE u1.username = ? AND u2.username = ?
-					ON CONFLICT (follower_id, followed_id) DO NOTHING;
+						INSERT INTO followers (id, follower_id, followed_id)
+						SELECT ?, u1.id, u2.id
+						FROM users u1, users u2
+						WHERE u1.username = ? AND u2.username = ?
+						ON CONFLICT (follower_id, followed_id) DO NOTHING
+						RETURNING followed_id;
 					`;
 
 					try {
-						const result = await env.DB.prepare(query).bind(uuid, follower, followed).run();
-						return new Response(JSON.stringify({ success: true, result }), { status: 200, headers: { ...corsHeaders } });
+						// Insert and return the followed user's ID
+						const result = await env.DB.prepare(query).bind(uuid, follower, followed).first();
+
+						if (!result) {
+							return new Response(JSON.stringify({ success: false, error: 'User already followed or not found' }), {
+								status: 400,
+								headers: { ...corsHeaders },
+							});
+						}
+
+						return new Response(JSON.stringify({ success: true, followed_id: result.followed_id }), {
+							status: 200,
+							headers: { ...corsHeaders },
+						});
 					} catch (error) {
-						return new Response(JSON.stringify({ success: false, error: error.message }), { status: 500, headers: { ...corsHeaders } });
+						return new Response(JSON.stringify({ success: false, error: error.message }), {
+							status: 500,
+							headers: { ...corsHeaders },
+						});
 					}
-
-
 				}
 
 				if (pathname === '/api/unfollow') {
@@ -735,6 +749,248 @@ export default {
 
 				}
 
+				if (pathname === '/api/create-post') {
+					const { user_id, content } = await request.json();
+
+					if (!user_id || !content) {
+						return new Response('User ID and content are required', { status: 400 });
+					}
+
+					const query = `
+						INSERT INTO posts (id, user_id, content, created_at)
+						VALUES (?, ?, ?, CURRENT_TIMESTAMP);
+					`;
+
+					try {
+						const postId = crypto.randomUUID(); // Generate a unique ID for the post
+						const result = await env.DB.prepare(query).bind(postId, user_id, content).run();
+
+						return new Response(JSON.stringify({ success: true, postId, result }), {
+							status: 200,
+							headers: { ...corsHeaders }
+						});
+					} catch (error) {
+						return new Response(JSON.stringify({ success: false, error: error.message }), {
+							status: 500,
+							headers: { ...corsHeaders }
+						});
+					}
+				}
+
+				/*
+
+				if (pathname === '/api/fetch-followed-data') {
+					try {
+						const { followedUsers } = await request.json();
+						console.log('followedusers', followedUsers);
+
+						if (!Array.isArray(followedUsers) || followedUsers.length === 0) {
+							return new Response(
+								JSON.stringify({ success: false, error: 'Followed users array is empty or invalid' }),
+								{ status: 400, headers: { ...corsHeaders } }
+							);
+						}
+
+						const userIds = followedUsers.map(user => user.id);
+						const placeholders = userIds.map(() => '?').join(', ');
+
+						const query = `
+						SELECT
+						  'post' AS type,
+						  posts.id,
+						  posts.user_id,
+						  posts.content,
+						  posts.created_at,
+						  NULL AS product_name,
+						  NULL AS product_description,
+						  NULL AS product_url,
+						  NULL AS product_price,
+						  NULL AS product_like_count
+						FROM posts
+						WHERE posts.user_id IN (${placeholders})
+						UNION ALL
+						SELECT
+						  'product' AS type,
+						  products.id,
+						  products.user_id,
+						  NULL AS content,
+						  products.created_at,
+						  products.product_name,
+						  products.product_description,
+						  products.product_url,
+						  products.product_price,
+						  COUNT(product_likes.liked_product) AS product_like_count
+						FROM products
+						LEFT JOIN product_likes ON products.id = product_likes.liked_product
+						WHERE products.user_id IN (${placeholders})
+						GROUP BY products.id
+						ORDER BY created_at DESC;
+					  `;
+
+						const results = await env.DB.prepare(query).bind(...userIds, ...userIds).all();
+
+						return new Response(
+							JSON.stringify({ success: true, data: results.results }),
+							{ status: 200, headers: { ...corsHeaders } }
+						);
+					} catch (error) {
+						console.error('error', error.message);
+						console.error('error', error);
+						return new Response(
+							JSON.stringify({ success: false, error: error.message }),
+							{ status: 500, headers: { ...corsHeaders } }
+						);
+					}
+				}*/
+
+				/*
+				if (pathname === '/api/fetch-followed-data') {
+					try {
+						const { followedUsers } = await request.json();
+						console.log('followedusers', followedUsers);
+
+						if (!Array.isArray(followedUsers) || followedUsers.length === 0) {
+							return new Response(
+								JSON.stringify({ success: false, error: 'Followed users array is empty or invalid' }),
+								{ status: 400, headers: { ...corsHeaders } }
+							);
+						}
+
+						const userIds = followedUsers.map(user => user.id);
+						const placeholders = userIds.map(() => '?').join(', ');
+
+						const query = `
+						SELECT
+						  'post' AS type,
+						  posts.id,
+						  posts.user_id,
+						  posts.content,
+						  posts.created_at,
+						  NULL AS product_name,
+						  NULL AS product_category,
+						  NULL AS product_description,
+						  NULL AS product_url,
+						  NULL AS product_price,
+						  NULL AS product_like_count,
+						  users.username,
+						  users.profile_picture
+						FROM posts
+						JOIN users ON posts.user_id = users.id
+						WHERE posts.user_id IN (${placeholders})
+						UNION ALL
+						SELECT
+						  'product' AS type,
+						  products.id,
+						  products.user_id,
+						  NULL AS content,
+						  products.created_at,
+						  products.product_name,
+						  products.product_category,
+						  products.product_description,
+						  products.product_url,
+						  products.product_price,
+						  COUNT(product_likes.liked_product) AS product_like_count,
+						  users.username,
+						  users.profile_picture
+						FROM products
+						LEFT JOIN product_likes ON products.id = product_likes.liked_product
+						JOIN users ON products.user_id = users.id
+						WHERE products.user_id IN (${placeholders})
+						GROUP BY products.id
+						ORDER BY created_at DESC;
+					  `;
+
+						const results = await env.DB.prepare(query).bind(...userIds, ...userIds).all();
+
+						return new Response(
+							JSON.stringify({ success: true, data: results.results }),
+							{ status: 200, headers: { ...corsHeaders } }
+						);
+					} catch (error) {
+						console.error('error', error.message);
+						console.error('error', error);
+						return new Response(
+							JSON.stringify({ success: false, error: error.message }),
+							{ status: 500, headers: { ...corsHeaders } }
+						);
+					}
+				}*/
+
+				if (pathname === '/api/fetch-followed-data') {
+					try {
+						const { followedUsers, userId } = await request.json(); // userId is the current user's ID
+						console.log('followedUsers', followedUsers);
+
+						if (!Array.isArray(followedUsers) || followedUsers.length === 0) {
+							return new Response(
+								JSON.stringify({ success: false, error: 'Followed users array is empty or invalid' }),
+								{ status: 400, headers: { ...corsHeaders } }
+							);
+						}
+
+						// Include the current user's ID in the list of user IDs
+						const userIds = [...followedUsers.map(user => user.id), userId];
+						const placeholders = userIds.map(() => '?').join(', ');
+
+						const query = `
+							SELECT
+								'post' AS type,
+								posts.id,
+								posts.user_id,
+								posts.content,
+								posts.created_at,
+								NULL AS product_name,
+								NULL AS product_category,
+								NULL AS product_description,
+								NULL AS product_url,
+								NULL AS product_price,
+								NULL AS product_like_count,
+								users.username,
+								users.profile_picture
+							FROM posts
+							JOIN users ON posts.user_id = users.id
+							WHERE posts.user_id IN (${placeholders})
+							UNION ALL
+							SELECT
+								'product' AS type,
+								products.id,
+								products.user_id,
+								NULL AS content,
+								products.created_at,
+								products.product_name,
+								products.product_category,
+								products.product_description,
+								products.product_url,
+								products.product_price,
+								COUNT(product_likes.liked_product) AS product_like_count,
+								users.username,
+								users.profile_picture
+							FROM products
+							LEFT JOIN product_likes ON products.id = product_likes.liked_product
+							JOIN users ON products.user_id = users.id
+							WHERE products.user_id IN (${placeholders})
+							GROUP BY products.id
+							ORDER BY created_at DESC;
+						`;
+
+						// Bind all user IDs (followed users + current user)
+						const results = await env.DB.prepare(query).bind(...userIds, ...userIds).all();
+
+						return new Response(
+							JSON.stringify({ success: true, data: results.results }),
+							{ status: 200, headers: { ...corsHeaders } }
+						);
+					} catch (error) {
+						console.error('error', error.message);
+						console.error('error', error);
+						return new Response(
+							JSON.stringify({ success: false, error: error.message }),
+							{ status: 500, headers: { ...corsHeaders } }
+						);
+					}
+				}
+
+
 
 			} else {
 
@@ -778,13 +1034,21 @@ export default {
 
 						// Fetch followers
 						const followersResults = await env.DB.prepare(`
-						SELECT u.username
+						SELECT u.id, u.username, u.profile_picture
 						FROM followers f
 						JOIN users u ON f.follower_id = u.id
 						WHERE f.followed_id = ?
 					  `).bind(userId).all();
 
-						return new Response(JSON.stringify({ followers: followersResults.results.map(row => row.username) }), {
+						return new Response(JSON.stringify({
+							followers: followersResults.results.map(row => {
+								return {
+									id: row.id,
+									username: row.username,
+									profile_picture: row.profile_picture
+								}
+							})
+						}), {
 							headers: { ...corsHeaders },
 						});
 					} catch (error) {
@@ -807,13 +1071,21 @@ export default {
 
 						// Fetch followed users
 						const followedResults = await env.DB.prepare(`
-							SELECT u.username
+							SELECT u.id, u.username, u.profile_picture
 							FROM followers f
 							JOIN users u ON f.followed_id = u.id
 							WHERE f.follower_id = ?
 							`).bind(userId).all();
 
-						return new Response(JSON.stringify({ followed: followedResults.results.map(row => row.username) }), {
+						return new Response(JSON.stringify({
+							followed: followedResults.results.map(row => {
+								return {
+									id: row.id,
+									username: row.username,
+									profile_picture: row.profile_picture
+								}
+							})
+						}), {
 							headers: { ...corsHeaders },
 						});
 					} catch (error) {

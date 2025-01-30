@@ -1,3 +1,13 @@
+
+/*CREATE TABLE posts (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    content TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);*/
+
+/*
 CREATE TABLE reports (
     id TEXT PRIMARY KEY,                  -- Unique ID for each report
     product_id TEXT NOT NULL,             -- Foreign key referencing the reported product
@@ -10,7 +20,7 @@ CREATE TABLE reports (
     FOREIGN KEY (reported_id) REFERENCES users(id) ON DELETE CASCADE,
     UNIQUE(product_id, reporter_id)       -- Ensure a user can report a product only once
 );
-
+*/
 /*
 CREATE TABLE users (
     id TEXT PRIMARY KEY, -- unique ID for each seller
@@ -28,7 +38,7 @@ CREATE TABLE users (
 );
 */
 -- Create the 'products' table
-/*
+
 CREATE TABLE products (
     id TEXT PRIMARY KEY, -- Auto-incrementing unique ID for each product
     product_name TEXT NOT NULL,           -- Name of the product
@@ -36,11 +46,12 @@ CREATE TABLE products (
     product_description TEXT ,
     product_category TEXT NOT NULL,
     product_url TEXT NOT NULL,
+	created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 	is_visible BOOLEAN DEFAULT 1,            -- URL of the product
     user_id INTEGER NOT NULL,           -- Foreign key referencing the seller ID
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
-*/
+
 
 /*
 

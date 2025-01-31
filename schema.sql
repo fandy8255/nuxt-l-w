@@ -1,27 +1,5 @@
 
-/*CREATE TABLE posts (
-    id TEXT PRIMARY KEY,
-    user_id TEXT NOT NULL,
-    content TEXT NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-);*/
 
-/*
-CREATE TABLE reports (
-    id TEXT PRIMARY KEY,                  -- Unique ID for each report
-    product_id TEXT NOT NULL,             -- Foreign key referencing the reported product
-    reporter_id TEXT NOT NULL,         -- Foreign key referencing the user who reported
-    reported_id TEXT NOT NULL,         -- Foreign key referencing the user who owns the product
-    report_reason TEXT NOT NULL,          -- Optional reason for reporting
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, -- Timestamp of the report
-    FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE,
-    FOREIGN KEY (reporter_id) REFERENCES users(id) ON DELETE CASCADE,
-    FOREIGN KEY (reported_id) REFERENCES users(id) ON DELETE CASCADE,
-    UNIQUE(product_id, reporter_id)       -- Ensure a user can report a product only once
-);
-*/
-/*
 CREATE TABLE users (
     id TEXT PRIMARY KEY, -- unique ID for each seller
     username TEXT,         -- username for each seller
@@ -34,9 +12,10 @@ CREATE TABLE users (
 	verified INTEGER DEFAULT 0,
 	is_admin BOOLEAN DEFAULT 0,
 	is_banned BOOLEAN DEFAULT 0,
+	created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 	banned_until TIMESTAMP
 );
-*/
+
 -- Create the 'products' table
 
 CREATE TABLE products (
@@ -52,8 +31,6 @@ CREATE TABLE products (
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
-
-/*
 
 CREATE TABLE product_images (
     id INTEGER PRIMARY KEY AUTOINCREMENT, -- Unique ID for each image
@@ -118,4 +95,25 @@ CREATE TABLE messages (
     FOREIGN KEY (receiver) REFERENCES users(id)
 );
 
-*/
+
+CREATE TABLE posts (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    content TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+
+CREATE TABLE reports (
+    id TEXT PRIMARY KEY,                  -- Unique ID for each report
+    product_id TEXT NOT NULL,             -- Foreign key referencing the reported product
+    reporter_id TEXT NOT NULL,         -- Foreign key referencing the user who reported
+    reported_id TEXT NOT NULL,         -- Foreign key referencing the user who owns the product
+    report_reason TEXT NOT NULL,          -- Optional reason for reporting
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, -- Timestamp of the report
+    FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE,
+    FOREIGN KEY (reporter_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (reported_id) REFERENCES users(id) ON DELETE CASCADE,
+    UNIQUE(product_id, reporter_id)       -- Ensure a user can report a product only once
+);

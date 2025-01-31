@@ -750,18 +750,19 @@ export default {
 				}
 
 				if (pathname === '/api/create-post') {
-					const { user_id, content } = await request.json();
+					try {
+						const { user_id, content } = await request.json();
 
-					if (!user_id || !content) {
-						return new Response('User ID and content are required', { status: 400 });
-					}
+						if (!user_id || !content) {
+							return new Response('User ID and content are required', { status: 400 });
+						}
 
-					const query = `
+						const query = `
 						INSERT INTO posts (id, user_id, content, created_at)
-						VALUES (?, ?, ?, CURRENT_TIMESTAMP);
+						VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+						RETURNING *
 					`;
 
-					try {
 						const postId = crypto.randomUUID(); // Generate a unique ID for the post
 						const result = await env.DB.prepare(query).bind(postId, user_id, content).run();
 
@@ -770,6 +771,8 @@ export default {
 							headers: { ...corsHeaders }
 						});
 					} catch (error) {
+						console.error('error', error)
+						console.error('error', error.message)
 						return new Response(JSON.stringify({ success: false, error: error.message }), {
 							status: 500,
 							headers: { ...corsHeaders }
@@ -777,144 +780,6 @@ export default {
 					}
 				}
 
-				/*
-
-				if (pathname === '/api/fetch-followed-data') {
-					try {
-						const { followedUsers } = await request.json();
-						console.log('followedusers', followedUsers);
-
-						if (!Array.isArray(followedUsers) || followedUsers.length === 0) {
-							return new Response(
-								JSON.stringify({ success: false, error: 'Followed users array is empty or invalid' }),
-								{ status: 400, headers: { ...corsHeaders } }
-							);
-						}
-
-						const userIds = followedUsers.map(user => user.id);
-						const placeholders = userIds.map(() => '?').join(', ');
-
-						const query = `
-						SELECT
-						  'post' AS type,
-						  posts.id,
-						  posts.user_id,
-						  posts.content,
-						  posts.created_at,
-						  NULL AS product_name,
-						  NULL AS product_description,
-						  NULL AS product_url,
-						  NULL AS product_price,
-						  NULL AS product_like_count
-						FROM posts
-						WHERE posts.user_id IN (${placeholders})
-						UNION ALL
-						SELECT
-						  'product' AS type,
-						  products.id,
-						  products.user_id,
-						  NULL AS content,
-						  products.created_at,
-						  products.product_name,
-						  products.product_description,
-						  products.product_url,
-						  products.product_price,
-						  COUNT(product_likes.liked_product) AS product_like_count
-						FROM products
-						LEFT JOIN product_likes ON products.id = product_likes.liked_product
-						WHERE products.user_id IN (${placeholders})
-						GROUP BY products.id
-						ORDER BY created_at DESC;
-					  `;
-
-						const results = await env.DB.prepare(query).bind(...userIds, ...userIds).all();
-
-						return new Response(
-							JSON.stringify({ success: true, data: results.results }),
-							{ status: 200, headers: { ...corsHeaders } }
-						);
-					} catch (error) {
-						console.error('error', error.message);
-						console.error('error', error);
-						return new Response(
-							JSON.stringify({ success: false, error: error.message }),
-							{ status: 500, headers: { ...corsHeaders } }
-						);
-					}
-				}*/
-
-				/*
-				if (pathname === '/api/fetch-followed-data') {
-					try {
-						const { followedUsers } = await request.json();
-						console.log('followedusers', followedUsers);
-
-						if (!Array.isArray(followedUsers) || followedUsers.length === 0) {
-							return new Response(
-								JSON.stringify({ success: false, error: 'Followed users array is empty or invalid' }),
-								{ status: 400, headers: { ...corsHeaders } }
-							);
-						}
-
-						const userIds = followedUsers.map(user => user.id);
-						const placeholders = userIds.map(() => '?').join(', ');
-
-						const query = `
-						SELECT
-						  'post' AS type,
-						  posts.id,
-						  posts.user_id,
-						  posts.content,
-						  posts.created_at,
-						  NULL AS product_name,
-						  NULL AS product_category,
-						  NULL AS product_description,
-						  NULL AS product_url,
-						  NULL AS product_price,
-						  NULL AS product_like_count,
-						  users.username,
-						  users.profile_picture
-						FROM posts
-						JOIN users ON posts.user_id = users.id
-						WHERE posts.user_id IN (${placeholders})
-						UNION ALL
-						SELECT
-						  'product' AS type,
-						  products.id,
-						  products.user_id,
-						  NULL AS content,
-						  products.created_at,
-						  products.product_name,
-						  products.product_category,
-						  products.product_description,
-						  products.product_url,
-						  products.product_price,
-						  COUNT(product_likes.liked_product) AS product_like_count,
-						  users.username,
-						  users.profile_picture
-						FROM products
-						LEFT JOIN product_likes ON products.id = product_likes.liked_product
-						JOIN users ON products.user_id = users.id
-						WHERE products.user_id IN (${placeholders})
-						GROUP BY products.id
-						ORDER BY created_at DESC;
-					  `;
-
-						const results = await env.DB.prepare(query).bind(...userIds, ...userIds).all();
-
-						return new Response(
-							JSON.stringify({ success: true, data: results.results }),
-							{ status: 200, headers: { ...corsHeaders } }
-						);
-					} catch (error) {
-						console.error('error', error.message);
-						console.error('error', error);
-						return new Response(
-							JSON.stringify({ success: false, error: error.message }),
-							{ status: 500, headers: { ...corsHeaders } }
-						);
-					}
-				}*/
 
 				if (pathname === '/api/fetch-followed-data') {
 					try {
@@ -944,7 +809,7 @@ export default {
 								NULL AS product_description,
 								NULL AS product_url,
 								NULL AS product_price,
-								NULL AS product_like_count,
+								NULL AS like_count,
 								users.username,
 								users.profile_picture
 							FROM posts
@@ -962,7 +827,7 @@ export default {
 								products.product_description,
 								products.product_url,
 								products.product_price,
-								COUNT(product_likes.liked_product) AS product_like_count,
+								COUNT(product_likes.liked_product) AS like_count,
 								users.username,
 								users.profile_picture
 							FROM products
@@ -1553,6 +1418,47 @@ export default {
 							headers: { ...corsHeaders },
 						});
 					} catch (error) {
+						return new Response("Error querying database: " + error.message, { status: 500, headers: { ...corsHeaders } });
+					}
+				}
+
+				if (pathname === "/api/top-users") {
+					try {
+						// Query to get the 5 most followed users
+						const mostFollowedQuery = `
+							SELECT u.id, u.username, u.profile_picture, u.profile_description, COUNT(f.follower_id) AS follower_count
+							FROM users u
+							LEFT JOIN followers f ON u.id = f.followed_id
+							GROUP BY u.id
+							ORDER BY follower_count DESC
+							LIMIT 5;
+						`;
+
+						// Query to get the 5 newest users
+						const newestUsersQuery = `
+							SELECT id, username, profile_picture, profile_description, created_at
+							FROM users
+							ORDER BY created_at DESC
+							LIMIT 5;
+						`;
+
+						// Execute both queries
+						const mostFollowedResults = await env.DB.prepare(mostFollowedQuery).all();
+						const newestUsersResults = await env.DB.prepare(newestUsersQuery).all();
+
+						// Combine the results into a single response
+						const responseData = {
+							most_followed: mostFollowedResults.results,
+							newest_users: newestUsersResults.results,
+						};
+
+						// Return the combined results
+						return new Response(JSON.stringify(responseData), {
+							headers: { ...corsHeaders },
+						});
+					} catch (error) {
+						console.error('error', error)
+						console.error('error', error.message)
 						return new Response("Error querying database: " + error.message, { status: 500, headers: { ...corsHeaders } });
 					}
 				}

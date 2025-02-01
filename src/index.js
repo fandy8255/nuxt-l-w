@@ -783,6 +783,7 @@ export default {
 
 				if (pathname === '/api/fetch-followed-data') {
 					try {
+						console.log('fetched feed')
 						const { followedUsers, userId } = await request.json(); // userId is the current user's ID
 						console.log('followedUsers', followedUsers);
 
@@ -835,7 +836,6 @@ export default {
 							JOIN users ON products.user_id = users.id
 							WHERE products.user_id IN (${placeholders})
 							GROUP BY products.id
-							ORDER BY created_at DESC;
 						`;
 
 						// Bind all user IDs (followed users + current user)
@@ -852,6 +852,77 @@ export default {
 							JSON.stringify({ success: false, error: error.message }),
 							{ status: 500, headers: { ...corsHeaders } }
 						);
+					}
+				}
+
+				if (pathname === '/api/block-user') {
+					try {
+						const { blocked_by, blocked_user } = await request.json();
+
+						if (!blocked_by || !blocked_user) {
+							return new Response('Blocked by and blocked user are required', { status: 400 });
+						}
+
+						const query = `
+							INSERT INTO blocked_users (id, blocked_by, blocked_user)
+							SELECT ?, u1.id, u2.id
+							FROM users u1, users u2
+							WHERE u1.username = ? AND u2.username = ?
+							ON CONFLICT (blocked_by, blocked_user) DO NOTHING
+							RETURNING *;
+							`;
+
+						const blockId = crypto.randomUUID(); // Generate a unique ID for the block record
+						await env.DB.prepare(query).bind(blockId, blocked_by, blocked_user).run();
+
+						return new Response(JSON.stringify({ success: true, blockId }), {
+							headers: { ...corsHeaders },
+						});
+					} catch (error) {
+						return new Response(JSON.stringify({ success: false, error: error.message }), {
+							status: 500,
+							headers: { ...corsHeaders },
+						});
+					}
+				}
+
+				if (pathname === '/api/unblock-user') {
+					try {
+						const { blocked_by, blocked_user } = await request.json();
+
+						// Validate input
+						if (!blocked_by || !blocked_user) {
+							return new Response('Blocked by and blocked user are required', { status: 400 });
+						}
+
+						// Query to delete the block record
+						const query = `
+							DELETE FROM blocked_users
+							WHERE blocked_by = (SELECT id FROM users WHERE username = ?)
+							AND blocked_user = (SELECT id FROM users WHERE username = ?);
+							`;
+
+						// Execute the query
+						const result = await env.DB.prepare(query).bind(blocked_by, blocked_user).run();
+
+						// Check if a record was deleted
+						if (result.meta.changes === 0) {
+							return new Response(JSON.stringify({ success: false, message: 'No block record found' }), {
+								status: 404,
+								headers: { ...corsHeaders },
+							});
+						}
+
+						// Return success response
+						return new Response(JSON.stringify({ success: true, message: 'User unblocked successfully' }), {
+							headers: { ...corsHeaders },
+						});
+					} catch (error) {
+						// Handle errors
+						return new Response(JSON.stringify({ success: false, error: error.message }), {
+							status: 500,
+							headers: { ...corsHeaders },
+						});
 					}
 				}
 
@@ -961,6 +1032,88 @@ export default {
 					}
 				}
 
+				if (pathname === '/api/blocked-users') {
+					try {
+						// Get the current user from the headers
+						let user = request.headers.get('X-User');
+						user = JSON.parse(user);
+						const userId = user.id;
+
+						// Validate user ID
+						if (!userId) {
+							return new Response('User ID not provided', { status: 400 });
+						}
+
+						// Fetch blocked users
+						const blockedUsersResults = await env.DB.prepare(`
+							SELECT u.id, u.username, u.profile_picture
+							FROM blocked_users b
+							JOIN users u ON b.blocked_user = u.id
+							WHERE b.blocked_by = ?;
+						`).bind(userId).all();
+
+						// Format the response
+						return new Response(JSON.stringify({
+							blocked_users: blockedUsersResults.results.map(row => {
+								return {
+									id: row.id,
+									username: row.username,
+									profile_picture: row.profile_picture
+								};
+							})
+						}), {
+							headers: { ...corsHeaders },
+						});
+					} catch (error) {
+						console.error('Error fetching blocked users:', error);
+						return new Response(JSON.stringify({ message: 'Error', details: error.message }), {
+							status: 500,
+							headers: { ...corsHeaders }
+						});
+					}
+				}
+
+				if (pathname === '/api/blocked-by-users') {
+					try {
+						// Get the current user from the headers
+						let user = request.headers.get('X-User');
+						user = JSON.parse(user);
+						const userId = user.id;
+
+						// Validate user ID
+						if (!userId) {
+							return new Response('User ID not provided', { status: 400 });
+						}
+
+						// Fetch blocked users
+						const blockedUsersResults = await env.DB.prepare(`
+							SELECT u.id, u.username, u.profile_picture
+							FROM blocked_users b
+							JOIN users u ON b.blocked_by = u.id
+							WHERE b.blocked_user = ?;
+						`).bind(userId).all();
+
+						// Format the response
+						return new Response(JSON.stringify({
+							blocked_by: blockedUsersResults.results.map(row => {
+								return {
+									id: row.id,
+									username: row.username,
+									profile_picture: row.profile_picture
+								};
+							})
+						}), {
+							headers: { ...corsHeaders },
+						});
+					} catch (error) {
+						console.error('Error fetching blocked users:', error);
+						return new Response(JSON.stringify({ message: 'Error', details: error.message }), {
+							status: 500,
+							headers: { ...corsHeaders }
+						});
+					}
+				}
+
 
 
 				if (pathname === '/api/user') {
@@ -1018,6 +1171,57 @@ export default {
 				}
 
 				if (pathname === '/api/threads') {
+					try {
+						let user = request.headers.get('X-User');
+						user = JSON.parse(user);
+						const userId = user.id;
+
+						if (!userId) {
+							return new Response('User ID not provided', { status: 400 });
+						}
+
+						const query = `
+							SELECT
+								t.thread_id,
+								t.sender,
+								sender_user.username AS sender_name,
+								sender_user.profile_picture AS sender_profile_picture,
+								t.receiver,
+								receiver_user.username AS receiver_name,
+								receiver_user.profile_picture AS receiver_profile_picture,
+								t.last_updated_at,
+								m.content AS last_message,
+								last_message_user.username AS last_message_owner, -- Username of the last message owner
+								(SELECT COUNT(*) FROM messages WHERE thread_id = t.thread_id) AS message_count -- Total message count
+							FROM threads t
+							LEFT JOIN messages m
+								ON t.thread_id = m.thread_id
+								AND m.created_at = (
+									SELECT MAX(created_at) FROM messages WHERE thread_id = t.thread_id
+								)
+							LEFT JOIN users sender_user
+								ON t.sender = sender_user.id
+							LEFT JOIN users receiver_user
+								ON t.receiver = receiver_user.id
+							LEFT JOIN users last_message_user
+								ON m.message_owner = last_message_user.id -- Join to get the last message owner's username
+							WHERE t.sender = ? OR t.receiver = ?
+							ORDER BY t.last_updated_at DESC;
+						`;
+
+						const results = await env.DB.prepare(query).bind(userId, userId).all();
+
+						return new Response(JSON.stringify(results.results), {
+							headers: { ...corsHeaders },
+						});
+					} catch (error) {
+						console.error('Error fetching threads:', error);
+						return new Response('Internal Server Error', { status: 500, headers: { ...corsHeaders } });
+					}
+				}
+
+				/*
+				if (pathname === '/api/threads') {
 
 					try {
 						//console.log('got full threads req')
@@ -1068,7 +1272,7 @@ export default {
 					}
 
 
-				}
+				}*/
 
 				if (pathname === "/api/thread") {
 

@@ -1,5 +1,4 @@
-
-
+/*
 CREATE TABLE users (
     id TEXT PRIMARY KEY, -- unique ID for each seller
     username TEXT,         -- username for each seller
@@ -116,4 +115,15 @@ CREATE TABLE reports (
     FOREIGN KEY (reporter_id) REFERENCES users(id) ON DELETE CASCADE,
     FOREIGN KEY (reported_id) REFERENCES users(id) ON DELETE CASCADE,
     UNIQUE(product_id, reporter_id)       -- Ensure a user can report a product only once
+);
+*/
+
+CREATE TABLE blocked_users (
+    id TEXT PRIMARY KEY,                  -- Unique ID for each block record
+    blocked_by TEXT NOT NULL,             -- User who initiated the block (FK to users.id)
+    blocked_user TEXT NOT NULL,           -- User who is blocked (FK to users.id)
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, -- Timestamp of when the block occurred
+    FOREIGN KEY (blocked_by) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (blocked_user) REFERENCES users(id) ON DELETE CASCADE,
+    UNIQUE (blocked_by, blocked_user)     -- Ensure a user can block another user only once
 );

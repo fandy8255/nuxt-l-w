@@ -1114,58 +1114,29 @@ export default {
 					}
 				}
 
-				if (pathname === '/api/user') {
-					const username = params.get('username'); // Extract the username slug
-					console.log('username ff', username);
 
-					// Validate the username parameter
+
+				if (pathname === '/api/user') {
+
+					const username = params.get('username'); // Extract the username slug
+					console.log('username', username)
 					if (!username) {
 						return new Response('Username not provided', { status: 404, headers: { ...corsHeaders } });
 					}
 
-					// Create a cache key based on the request URL
-					const cacheKey = new Request(request.url, request);
-					const cache = caches.default;
+					let results = await getUserByUsername(username)
 
-					// Try to get the response from the cache
-					let cachedResponse = await cache.match(cacheKey);
-
-					if (cachedResponse) {
-						// If cached response exists, return it
-						console.log('Serving from cache for username:', username);
-						return cachedResponse;
-					}
-
-					// If not in cache, fetch from the database
-					let results;
 					try {
-						results = await getUserByUsername(username);
 
 						if (!results) {
-							// If user not found, return a 404 response
 							return new Response(JSON.stringify({ message: 'User not found' }), { status: 404, headers: { ...corsHeaders } });
 						}
+						return new Response(JSON.stringify(results), { status: 200, headers: { ...corsHeaders } });
 
-						// Create a response and cache it
-						const response = new Response(JSON.stringify(results), {
-							status: 200,
-							headers: {
-								...corsHeaders,
-								'Cache-Control': 'public, max-age=600', // Cache for 10 minutes
-							},
-						});
-
-						// Store the response in the cache
-						cache.put(cacheKey, response.clone())
-
-						console.log('Caching response for username:', username);
-						return response;
 					} catch (error) {
-						// Handle database errors
 						return new Response(JSON.stringify({ message: 'Database error', details: error.message }), { status: 500, headers: { ...corsHeaders } });
 					}
 				}
-
 
 				if (pathname === '/api/liked-products') {
 					try {
@@ -1556,154 +1527,6 @@ export default {
 					}
 				}
 
-				if (pathname === '/api/users') {
-					// Fetch filter parameters
-					const location = params.get('ubicacion');
-					const minAge = params.get('minAge');
-					const maxAge = params.get('maxAge');
-					const verified = params.get('verified');
-
-					// Create a cache key based on the request URL and filter parameters
-					const cacheKey = new Request(request.url, request);
-					const cache = caches.default;
-
-					// Try to get the response from the cache
-					let cachedResponse = await cache.match(cacheKey);
-
-					if (cachedResponse) {
-						// If cached response exists, return it with a debug header
-						console.log('Serving from cache for filters:', { location, minAge, maxAge, verified });
-						const response = new Response(cachedResponse.body, cachedResponse);
-						response.headers.set('X-Cache', 'HIT'); // Add a debug header
-						return response;
-					}
-
-					// If not in cache, fetch from the database
-					try {
-						// Build query
-						let query = `
-							SELECT id, username, email, profile_picture, profile_description, user_type, ubicacion, age, verified
-							FROM users
-							WHERE 1=1
-						`;
-
-						// Add filters if present
-						const queryParams = [];
-						if (location) {
-							query += ' AND ubicacion = ?';
-							queryParams.push(location);
-						}
-						if (minAge) {
-							query += ' AND age >= ?';
-							queryParams.push(minAge);
-						}
-						if (maxAge) {
-							query += ' AND age <= ?';
-							queryParams.push(maxAge);
-						}
-						if (verified) {
-							query += ' AND verified = ?';
-							queryParams.push(verified === 'true' ? 1 : 0); // Assuming `verified` is a boolean stored as 1/0 in the database
-						}
-
-						// Execute the query
-						const results = await env.DB.prepare(query).bind(...queryParams).all();
-
-						// Create a response and cache it
-						const response = new Response(JSON.stringify({ data: results }), {
-							headers: {
-								...corsHeaders,
-								'Cache-Control': 'public, max-age=600', // Cache for 10 minutes
-								'X-Cache': 'MISS', // Add a debug header
-							},
-						});
-
-						// Store the response in the cache
-						await cache.put(cacheKey, response.clone());
-						console.log('Caching response for filters:', { location, minAge, maxAge, verified });
-
-						return response;
-					} catch (error) {
-						// Handle database errors
-						console.error('Database error:', error.message);
-						return new Response('Error querying database: ' + error.message, { status: 500, headers: { ...corsHeaders } });
-					}
-				}
-
-				/*
-
-				if (pathname === '/api/users') {
-					// Fetch filter parameters
-					const location = params.get('ubicacion');
-					const minAge = params.get('minAge');
-					const maxAge = params.get('maxAge');
-					const verified = params.get('verified');
-
-					// Create a cache key based on the request URL and filter parameters
-					const cacheKey = new Request(request.url, request);
-					const cache = caches.default;
-
-					// Try to get the response from the cache
-					let cachedResponse = await cache.match(cacheKey);
-
-					if (cachedResponse) {
-						// If cached response exists, return it
-						console.log('Serving from cache for filters:', { location, minAge, maxAge, verified });
-						return cachedResponse;
-					}
-
-					// If not in cache, fetch from the database
-					try {
-						// Build query
-						let query = `
-							SELECT id, username, email, profile_picture, profile_description, user_type, ubicacion, age, verified
-							FROM users
-							WHERE 1=1
-						`;
-
-						// Add filters if present
-						const queryParams = [];
-						if (location) {
-							query += ' AND ubicacion = ?';
-							queryParams.push(location);
-						}
-						if (minAge) {
-							query += ' AND age >= ?';
-							queryParams.push(minAge);
-						}
-						if (maxAge) {
-							query += ' AND age <= ?';
-							queryParams.push(maxAge);
-						}
-						if (verified) {
-							query += ' AND verified = ?';
-							queryParams.push(verified === 'true' ? 1 : 0); // Assuming `verified` is a boolean stored as 1/0 in the database
-						}
-
-						// Execute the query
-						const results = await env.DB.prepare(query).bind(...queryParams).all();
-
-						// Create a response and cache it
-						const response = new Response(JSON.stringify({ data: results }), {
-							headers: {
-								...corsHeaders,
-								'Cache-Control': 'public, max-age=600', // Cache for 10 minutes
-							},
-						});
-
-						// Store the response in the cache
-						await cache.put(cacheKey, response.clone());
-						console.log('Caching response for filters:', { location, minAge, maxAge, verified });
-
-						return response;
-					} catch (error) {
-						// Handle database errors
-						console.error('Database error:', error.message);
-						return new Response('Error querying database: ' + error.message, { status: 500, headers: { ...corsHeaders } });
-					}
-				}*/
-
-				/*
 				if (pathname === "/api/users") {
 					// Fetch filter parameters
 					const location = params.get("ubicacion");
@@ -1749,7 +1572,6 @@ export default {
 						return new Response("Error querying database: " + error.message, { status: 500, headers: { ...corsHeaders } });
 					}
 				}
-					*/
 
 				if (pathname === "/api/top-users") {
 					try {

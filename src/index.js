@@ -1,10 +1,12 @@
+import crypto from 'crypto';
+
 export default {
 	async fetch(request, env) {
 		// Define the CORS headers
 		const corsHeaders = {
 			'Access-Control-Allow-Origin': '*', // Replace '*' with your specific origin if needed
 			'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-			'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-User, X-User-s',
+			'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-User, X-User-s, X-Timestamp',
 		};
 
 		async function getUserByUsername(username) {
@@ -118,26 +120,58 @@ export default {
 
 		}
 
+		const verifyHMAC = (authHeader, timestamp) => {
+			const SECRET_KEY = env.SECRET_API_KEY;
+
+			// Check if the auth header is valid
+			if (!authHeader || !authHeader.startsWith('HVAC ')) {
+				console.error('No auth header or auth header does not start with HVAC');
+				return false;
+			}
+
+			// Extract the signature from the auth header
+
+			const signature = authHeader.split(' ')[1].trim(); // Trim any extra spaces
+			console.log('Extracted Signature:', signature);
+			console.log('authheader', authHeader)
+
+			// Generate the expected signature using SHA-256 HMAC
+			const expectedSignature = crypto.createHmac('sha256', SECRET_KEY)
+				.update(timestamp)
+				.digest('hex'); // Ensure the signature is in hexadecimal format
+			console.log('Expected Signature:', expectedSignature);
+
+			// Compare the signatures
+			return signature === expectedSignature;
+		};
+
+
 		// Handle the preflight OPTIONS request
 		if (request.method === 'OPTIONS') {
 			return new Response(null, { headers: corsHeaders });
 		}
 
 		const authHeader = request.headers.get('Authorization');
-		const expectedKey = env.SECRET_API_KEY;
+        const timestamp = request.headers.get('X-Timestamp');
 
-		if (authHeader !== `Bearer ${expectedKey}`) {
+        // Reject requests with missing auth headers
+        if (!authHeader || !timestamp) {
+			console.error('no auth header or timestamp')
+            return new Response('Unauthorized', { status: 401 });
+        }
 
-			return new Response('Unauthorized', {
-				headers: { ...corsHeaders },
-			})
-			//return new Response('Unauthorized', { status: 401 });
-		}
+        // Verify HMAC Signature
+        if (!verifyHMAC(authHeader, timestamp)) {
+            return new Response('Unauthorized', { status: 401 });
+        }
+
+
 
 		// Proceed with handling other request methods
 		try {
 			const { pathname } = new URL(request.url);
 			const params = new URL(request.url).searchParams
+			const cacheTTL = 60
 
 			if (request.method === "POST") {
 
@@ -931,32 +965,59 @@ export default {
 			} else {
 
 
-				if (pathname === '/api/profile') { //get user data
-
+				if (pathname === '/api/profile') {
 					try {
 						let user = request.headers.get('X-User');
-						user = JSON.parse(user)
-						const userId = user.id
+						user = JSON.parse(user);
+						const userId = user.id;
 
 						if (!userId) {
 							return new Response('User ID not provided', { status: 400 });
 						}
-						const results = await env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(userId).first();
+
+						// Create a cache key based on the user ID
+						const cacheKey = new Request(request.url, request);
+						const cache = caches.default;
+
+						// Try to get the response from the cache
+						let cachedResponse = await cache.match(cacheKey);
+
+						if (cachedResponse) {
+							console.log('Serving profile from cache for user:', userId);
+							return cachedResponse;
+						}
+
+						// If not in cache, fetch from the database
+						const results = await env.DB.prepare('SELECT * FROM users WHERE id = ?')
+							.bind(userId)
+							.first();
 
 						if (!results) {
 							return new Response('User not found', { status: 404, headers: { ...corsHeaders } });
 						}
-						return new Response(JSON.stringify({ data: results }), {
-							headers: { ...corsHeaders },
+
+						// Create a response and cache it
+						const response = new Response(JSON.stringify({ data: results }), {
+							headers: {
+								...corsHeaders,
+								'Cache-Control': `public, max-age=${cacheTTL}`, // Cache for 10 minutes
+							},
 						});
 
+						// Store the response in the cache
+						await cache.put(cacheKey, response.clone());
+						console.log('Caching profile response for user:', userId);
+
+						return response;
 					} catch (error) {
-						console.log('error', error)
-						return new Response(JSON.stringify({ message: 'error', details: error.message }), { status: 500, headers: { ...corsHeaders } });
-
+						console.error('Error fetching profile:', error.message);
+						return new Response(
+							JSON.stringify({ message: 'Error fetching profile', details: error.message }),
+							{ status: 500, headers: { ...corsHeaders } }
+						);
 					}
-
 				}
+
 
 				if (pathname === '/api/followers') {
 					try {
@@ -968,25 +1029,46 @@ export default {
 							return new Response('User ID not provided', { status: 400 });
 						}
 
+						// Create a cache key based on the user ID
+						const cacheKey = new Request(request.url, request);
+						const cache = caches.default;
+
+						// Try to get the response from the cache
+						let cachedResponse = await cache.match(cacheKey);
+
+						if (cachedResponse) {
+							console.log('Serving followers from cache for user:', userId);
+							return cachedResponse;
+						}
+
 						// Fetch followers
 						const followersResults = await env.DB.prepare(`
-						SELECT u.id, u.username, u.profile_picture
-						FROM followers f
-						JOIN users u ON f.follower_id = u.id
-						WHERE f.followed_id = ?
-					  `).bind(userId).all();
+							SELECT u.id, u.username, u.profile_picture
+							FROM followers f
+							JOIN users u ON f.follower_id = u.id
+							WHERE f.followed_id = ?
+						`).bind(userId).all();
 
-						return new Response(JSON.stringify({
+						const response = new Response(JSON.stringify({
 							followers: followersResults.results.map(row => {
 								return {
 									id: row.id,
 									username: row.username,
 									profile_picture: row.profile_picture
-								}
+								};
 							})
 						}), {
-							headers: { ...corsHeaders },
+							headers: {
+								...corsHeaders,
+								'Cache-Control': `public, max-age=${cacheTTL}`, // Cache for 10 minutes
+							},
 						});
+
+						// Store the response in the cache
+						await cache.put(cacheKey, response.clone());
+						console.log('Caching followers response for user:', userId);
+
+						return response;
 					} catch (error) {
 						console.error('Error fetching followers:', error);
 						return new Response(JSON.stringify({ message: 'Error', details: error.message }), {
@@ -1005,25 +1087,46 @@ export default {
 							return new Response('User ID not provided', { status: 400 });
 						}
 
+						// Create a cache key based on the user ID
+						const cacheKey = new Request(request.url, request);
+						const cache = caches.default;
+
+						// Try to get the response from the cache
+						let cachedResponse = await cache.match(cacheKey);
+
+						if (cachedResponse) {
+							console.log('Serving followed users from cache for user:', userId);
+							return cachedResponse;
+						}
+
 						// Fetch followed users
 						const followedResults = await env.DB.prepare(`
 							SELECT u.id, u.username, u.profile_picture
 							FROM followers f
 							JOIN users u ON f.followed_id = u.id
 							WHERE f.follower_id = ?
-							`).bind(userId).all();
+						`).bind(userId).all();
 
-						return new Response(JSON.stringify({
+						const response = new Response(JSON.stringify({
 							followed: followedResults.results.map(row => {
 								return {
 									id: row.id,
 									username: row.username,
 									profile_picture: row.profile_picture
-								}
+								};
 							})
 						}), {
-							headers: { ...corsHeaders },
+							headers: {
+								...corsHeaders,
+								'Cache-Control': `public, max-age=${cacheTTL}`, // Cache for 10 minutes
+							},
 						});
+
+						// Store the response in the cache
+						await cache.put(cacheKey, response.clone());
+						console.log('Caching followed users response for user:', userId);
+
+						return response;
 					} catch (error) {
 						console.error('Error fetching followed users:', error);
 						return new Response(JSON.stringify({ message: 'Error', details: error.message }), {
@@ -1151,7 +1254,7 @@ export default {
 							status: 200,
 							headers: {
 								...corsHeaders,
-								'Cache-Control': 'public, max-age=600', // Cache for 10 minutes
+								'Cache-Control': `public, max-age=${cacheTTL}`, // Cache for 10 minutes
 							},
 						});
 
@@ -1209,6 +1312,18 @@ export default {
 							return new Response('User ID not provided', { status: 400 });
 						}
 
+						// Create a cache key based on the user ID
+						const cacheKey = new Request(request.url, request);
+						const cache = caches.default;
+
+						// Try to get the response from the cache
+						let cachedResponse = await cache.match(cacheKey);
+
+						if (cachedResponse) {
+							console.log('Serving threads from cache for user:', userId);
+							return cachedResponse;
+						}
+
 						const query = `
 							SELECT
 								t.thread_id,
@@ -1220,8 +1335,8 @@ export default {
 								receiver_user.profile_picture AS receiver_profile_picture,
 								t.last_updated_at,
 								m.content AS last_message,
-								last_message_user.username AS last_message_owner, -- Username of the last message owner
-								(SELECT COUNT(*) FROM messages WHERE thread_id = t.thread_id) AS message_count -- Total message count
+								last_message_user.username AS last_message_owner,
+								(SELECT COUNT(*) FROM messages WHERE thread_id = t.thread_id) AS message_count
 							FROM threads t
 							LEFT JOIN messages m
 								ON t.thread_id = m.thread_id
@@ -1233,16 +1348,25 @@ export default {
 							LEFT JOIN users receiver_user
 								ON t.receiver = receiver_user.id
 							LEFT JOIN users last_message_user
-								ON m.message_owner = last_message_user.id -- Join to get the last message owner's username
+								ON m.message_owner = last_message_user.id
 							WHERE t.sender = ? OR t.receiver = ?
 							ORDER BY t.last_updated_at DESC;
 						`;
 
 						const results = await env.DB.prepare(query).bind(userId, userId).all();
 
-						return new Response(JSON.stringify(results.results), {
-							headers: { ...corsHeaders },
+						const response = new Response(JSON.stringify(results.results), {
+							headers: {
+								...corsHeaders,
+								'Cache-Control': `public, max-age=${cacheTTL}`, // Cache for 10 minutes
+							},
 						});
+
+						// Store the response in the cache
+						await cache.put(cacheKey, response.clone());
+						console.log('Caching threads response for user:', userId);
+
+						return response;
 					} catch (error) {
 						console.error('Error fetching threads:', error);
 						return new Response('Internal Server Error', { status: 500, headers: { ...corsHeaders } });
@@ -1251,130 +1375,147 @@ export default {
 
 
 				if (pathname === "/api/thread") {
-
-					//get all messages from thread
-
+					// Get all messages from thread with caching
 					try {
-						// Extract thread ID from query params
-						//console.log('got the request cmno')
 						const threadId = params.get("id");
-						//console.log('the thread is is:', threadId)
 						if (!threadId) {
-							console.error('no thread id')
-							return new Response('no thread id', { status: 400, headers: { ...corsHeaders } });
+							console.error('No thread ID');
+							return new Response('No thread ID', { status: 400, headers: { ...corsHeaders } });
 						}
 
-						// Extract and validate the user from headers
 						let user = request.headers.get("X-User");
 						if (!user) {
-							console.error('no user')
-							return new Response('no user', { status: 400, headers: { ...corsHeaders } });
+							console.error('No user');
+							return new Response('No user', { status: 400, headers: { ...corsHeaders } });
 						}
 
 						user = JSON.parse(user);
 						const userId = user.id;
 
+						// Create a cache key based on thread ID
+						const cacheKey = new Request(request.url, request);
+						const cache = caches.default;
+						let cachedResponse = await cache.match(cacheKey);
+
+						if (cachedResponse) {
+							console.log('Serving from cache for thread:', threadId);
+							return cachedResponse;
+						}
+
 						// Verify if the user belongs to the thread
 						const { results: thread } = await env.DB.prepare(`
-						SELECT sender, receiver
-						FROM threads
-						WHERE thread_id = ? AND is_deleted = 0
-					  `).bind(threadId).all();
+							SELECT sender, receiver
+							FROM threads
+							WHERE thread_id = ? AND is_deleted = 0
+						`).bind(threadId).all();
 
 						if (!thread.length) {
-							console.error('no threads')
-							return new Response('no threads', { status: 400, headers: { ...corsHeaders } });
+							console.error('No threads');
+							return new Response('No threads', { status: 400, headers: { ...corsHeaders } });
 						}
 
 						const { sender, receiver } = thread[0];
 						if (userId !== sender && userId !== receiver) {
-							console.error('unathorized')
-							return new Response("unauthorized", { status: 400, headers: { ...corsHeaders } });
+							console.error('Unauthorized');
+							return new Response("Unauthorized", { status: 400, headers: { ...corsHeaders } });
 						}
 
 						// Fetch messages and user details
 						const { results: messages } = await env.DB.prepare(`
-						SELECT
-						  m.message_id,
-						  m.content,
-						  m.created_at,
-						  m.message_owner,
-						  u1.username AS sender_username,
-						  u1.id AS sender_id,
-						  u1.profile_picture AS sender_profile_picture,
-						  u2.username AS receiver_username,
-						  u2.id AS receiver_id,
-						  u2.profile_picture AS receiver_profile_picture
-						FROM messages m
-						JOIN threads t ON m.thread_id = t.thread_id
-						JOIN users u1 ON t.sender = u1.id
-						JOIN users u2 ON t.receiver = u2.id
-						WHERE m.thread_id = ? AND m.is_deleted = 0
-						ORDER BY m.created_at ASC
-					  `).bind(threadId).all();
+							SELECT
+								m.message_id,
+								m.content,
+								m.created_at,
+								m.message_owner,
+								u1.username AS sender_username,
+								u1.id AS sender_id,
+								u1.profile_picture AS sender_profile_picture,
+								u2.username AS receiver_username,
+								u2.id AS receiver_id,
+								u2.profile_picture AS receiver_profile_picture
+							FROM messages m
+							JOIN threads t ON m.thread_id = t.thread_id
+							JOIN users u1 ON t.sender = u1.id
+							JOIN users u2 ON t.receiver = u2.id
+							WHERE m.thread_id = ? AND m.is_deleted = 0
+							ORDER BY m.created_at ASC
+						`).bind(threadId).all();
 
-						return new Response(JSON.stringify({ messages }), {
-							headers: { ...corsHeaders },
+						const response = new Response(JSON.stringify({ messages }), {
+							headers: {
+								...corsHeaders,
+								'Cache-Control': `public, max-age=${cacheTTL}`, // Cache for 10 minutes
+							},
 						});
-					} catch (error) {
-						console.error(error)
-						console.error("Error:", error.message);
-						return new Response(JSON.stringify({ error: error }), { status: 400, headers: { ...corsHeaders } });
-					}
 
+						await cache.put(cacheKey, response.clone());
+						console.log('Caching response for thread:', threadId);
+
+						return response;
+					} catch (error) {
+						console.error(error);
+						console.error("Error:", error.message);
+						return new Response(JSON.stringify({ error: error.message }), { status: 400, headers: { ...corsHeaders } });
+					}
 				}
 
 
-				if (pathname === "/api/getProducts") { //get products
-
+				if (pathname === "/api/getProducts") {
+					const cache = caches.default;
 					const productId = params.get("product_id");
-					const userId = params.get('user_id')
-					let query = null
-					let results = null;
-					if (productId) {
-						// Query to fetch product, owner, and images in one go
-						try {
-							console.log('product id is', productId)
-							query = `
-								SELECT
-								p.id,
-								p.product_name,
-								p.product_price,
-								p.product_description,
-								p.product_category,
-								p.product_url,
-								u.id AS user_id,
-								u.username,
-								u.profile_picture,
-								pi.id AS image_id,
-								pi.image_url,
-								COUNT(pl.id) AS like_count
-							FROM
-								products p
-							JOIN
-								users u ON p.user_id = u.id
-							LEFT JOIN
-								product_images pi ON pi.product_id = p.id
-							LEFT JOIN
-								product_likes pl ON pl.liked_product = p.id
-							WHERE
-								p.id = ?
-							GROUP BY
-								p.id, u.id, pi.id;`;
+					const userId = params.get("user_id");
 
-							// Execute the query with the provided product_id
+					let cacheKey = new Request(request.url); // Unique cache key per request
+					let cachedResponse = await cache.match(cacheKey);
+
+					if (cachedResponse) {
+						console.log("Cache hit: Serving cached response");
+						return cachedResponse;
+					}
+
+					let query = null;
+					let results = null;
+
+					try {
+						if (productId) {
+							console.log("Fetching product by ID:", productId);
+							query = `
+									SELECT
+										p.id,
+										p.product_name,
+										p.product_price,
+										p.product_description,
+										p.product_category,
+										p.product_url,
+										u.id AS user_id,
+										u.username,
+										u.profile_picture,
+										pi.id AS image_id,
+										pi.image_url,
+										COUNT(pl.id) AS like_count
+									FROM
+										products p
+									JOIN
+										users u ON p.user_id = u.id
+									LEFT JOIN
+										product_images pi ON pi.product_id = p.id
+									LEFT JOIN
+										product_likes pl ON pl.liked_product = p.id
+									WHERE
+										p.id = ?
+									GROUP BY
+										p.id, u.id, pi.id;
+								`;
+
 							let result = await env.DB.prepare(query).bind(productId).all();
-							//console.log('resulttt', result)
 
 							if (!result.results || result.results.length === 0) {
-								console.error('results not found')
-								return new Response('Product not found', {
+								console.error("Product not found");
+								return new Response("Product not found", {
 									status: 404,
 									headers: { ...corsHeaders },
 								});
 							}
-							console.log('got query for prodid', result)
-							// Transform the results into a structured object
 
 							results = {
 								id: result.results[0].id,
@@ -1386,76 +1527,42 @@ export default {
 								like_count: result.results[0].like_count,
 								user_id: result.results[0].user_id,
 								username: result.results[0].username,
-								profile_picture: result.results[0].profile_picture
-								,
-								images: result.results.map(row => ({
-									image_id: row.image_id,
-									image_url: row.image_url,
-								})).filter(image => image.image_id), // Remove null image entries
+								profile_picture: result.results[0].profile_picture,
+								images: result.results
+									.map(row => ({
+										image_id: row.image_id,
+										image_url: row.image_url,
+									}))
+									.filter(image => image.image_id), // Remove null images
 							};
-
-							console.log('result', results)
-
-							return new Response(JSON.stringify({ data: results }), {
-								headers: { ...corsHeaders },
-							});
-
-						} catch (error) {
-							console.error('results not found', error)
-							return new Response(JSON.stringify({ error: error }), {
-								error: error,
-								status: 404,
-								headers: { ...corsHeaders },
-							});
-
-						}
-
-					}
-
-					if (userId) {
-
-						try {
+						} else if (userId) {
+							console.log("Fetching products by user ID:", userId);
 							query = `
-							SELECT
-								p.id,
-								p.product_name,
-								p.product_price,
-								p.product_description,
-								p.product_category,
-								p.product_url,
-								u.id AS user_id,
-								u.username,
-								u.profile_picture,
-								COUNT(pl.id) AS like_count
-							FROM
-								products p
-							JOIN
-								users u ON p.user_id = u.id
-							LEFT JOIN
-								product_likes pl ON pl.liked_product = p.id
-							WHERE
-								p.user_id = ?
-							GROUP BY
-								p.id, u.id;
-      						`
+									SELECT
+										p.id,
+										p.product_name,
+										p.product_price,
+										p.product_description,
+										p.product_category,
+										p.product_url,
+										u.id AS user_id,
+										u.username,
+										u.profile_picture,
+										COUNT(pl.id) AS like_count
+									FROM
+										products p
+									JOIN
+										users u ON p.user_id = u.id
+									LEFT JOIN
+										product_likes pl ON pl.liked_product = p.id
+									WHERE
+										p.user_id = ?
+									GROUP BY
+										p.id, u.id;
+								`;
 							results = await env.DB.prepare(query).bind(userId).all();
-
-							return new Response(JSON.stringify({ data: results }), {
-								headers: { ...corsHeaders },
-							});
-
-						} catch (error) {
-							console.error('results not found', error)
-							return new Response(JSON.stringify({ error: error }), {
-								error: error,
-								status: 404,
-								headers: { ...corsHeaders },
-							});
-						}
-					}
-
-					else {
-						try {
+						} else {
+							console.log("Fetching all products");
 							query = `
 									SELECT
 										p.id,
@@ -1475,28 +1582,124 @@ export default {
 									LEFT JOIN
 										product_likes pl ON pl.liked_product = p.id
 									GROUP BY
-										p.id, u.id;`
-
+										p.id, u.id;
+								`;
 							results = await env.DB.prepare(query).all();
-
-							return new Response(JSON.stringify({ data: results }), {
-								headers: { ...corsHeaders },
-							});
-
-						} catch (error) {
-							console.error('results not found', error)
-							return new Response(JSON.stringify({ error: error }), {
-								error: error,
-								status: 404,
-								headers: { ...corsHeaders },
-							});
 						}
 
+						// Convert results to JSON response
+						let response = new Response(JSON.stringify({ data: results, cacheKey: request.url }), {
+							headers: { ...corsHeaders, "Cache-Control": `max-age=${cacheTTL}` },
+						});
+
+						// Store the response in cache
+						await cache.put(cacheKey, response.clone());
+
+						return response;
+					} catch (error) {
+						console.error("Database query error:", error);
+						return new Response(JSON.stringify({ error: error.message }), {
+							status: 500,
+							headers: { ...corsHeaders },
+						});
 					}
-
-
 				}
 
+
+
+				if (pathname === "/api/filter_products") {
+					const cache = caches.default;
+					const category = params.get("product_category");
+					const minPrice = params.get("minPrice");
+					const maxPrice = params.get("maxPrice");
+					const minAge = params.get("minAge");
+					const maxAge = params.get("maxAge");
+					const ubicacion = params.get("ubicacion");
+
+					// Generate a unique cache key based on the request URL and query parameters
+					let cacheKey = new Request(request.url); // Unique cache key per request
+					let cachedResponse = await cache.match(cacheKey);
+
+					if (cachedResponse) {
+						console.log("Cache hit: Serving cached response");
+						return cachedResponse;
+					}
+
+					// Build query
+					let query = `
+					  SELECT products.id, product_name, product_price, product_description, product_category, product_url, users.username, users.age, users.ubicacion
+					  FROM products
+					  INNER JOIN users ON products.user_id = users.id
+					  WHERE 1=1`;
+
+					const queryParams = [];
+					if (category) {
+						query += " AND product_category = ?";
+						queryParams.push(category);
+					}
+					if (minPrice) {
+						query += " AND product_price >= ?";
+						queryParams.push(minPrice);
+					}
+					if (maxPrice) {
+						query += " AND product_price <= ?";
+						queryParams.push(maxPrice);
+					}
+					if (minAge) {
+						query += " AND users.age >= ?";
+						queryParams.push(minAge);
+					}
+					if (maxAge) {
+						query += " AND users.age <= ?";
+						queryParams.push(maxAge);
+					}
+					if (ubicacion) {
+						query += " AND users.ubicacion = ?";
+						queryParams.push(ubicacion);
+					}
+
+					let results = null;
+
+					try {
+						// Execute the query
+						const result = await env.DB.prepare(query).bind(...queryParams).all();
+						if (!result.results || result.results.length === 0) {
+							console.error("No products found matching filters");
+							return new Response("No products found", { status: 404, headers: { ...corsHeaders } });
+						}
+
+						results = result.results.map(row => ({
+							id: row.id,
+							product_name: row.product_name,
+							product_price: row.product_price,
+							product_description: row.product_description,
+							product_category: row.product_category,
+							product_url: row.product_url,
+							username: row.username,
+							age: row.age,
+							ubicacion: row.ubicacion,
+						}));
+
+						// Convert results to JSON response
+						let response = new Response(JSON.stringify({ data: results , cacheKey:request.url}), {
+							headers: { ...corsHeaders, "Cache-Control": `max-age=${cacheTTL}` },
+						});
+
+						// Store the response in cache
+						await cache.put(cacheKey, response.clone());
+
+						return response;
+
+					} catch (error) {
+						console.error("Database query error:", error);
+						return new Response(JSON.stringify({ error: error.message }), {
+							status: 500,
+							headers: { ...corsHeaders },
+						});
+					}
+				}
+
+				/*
 
 				if (pathname === "/api/filter_products") {
 
@@ -1554,7 +1757,9 @@ export default {
 						console.error('error', error)
 						return new Response("Error querying database: " + error.message, { status: 500 });
 					}
-				}
+				}*/
+
+
 
 				if (pathname === '/api/users') {
 					// Fetch filter parameters
@@ -1564,7 +1769,7 @@ export default {
 					const verified = params.get('verified');
 
 					// Create a cache key based on the request URL and filter parameters
-					const cacheKey = new Request(request.url, request);
+					const cacheKey = new Request(request.url);
 					const cache = caches.default;
 
 					// Try to get the response from the cache
@@ -1573,9 +1778,7 @@ export default {
 					if (cachedResponse) {
 						// If cached response exists, return it with a debug header
 						console.log('Serving from cache for filters:', { location, minAge, maxAge, verified });
-						const response = new Response(cachedResponse.body, cachedResponse);
-						response.headers.set('X-Cache', 'HIT'); // Add a debug header
-						return response;
+						return cachedResponse
 					}
 
 					// If not in cache, fetch from the database
@@ -1613,8 +1816,7 @@ export default {
 						const response = new Response(JSON.stringify({ data: results }), {
 							headers: {
 								...corsHeaders,
-								'Cache-Control': 'public, max-age=600', // Cache for 10 minutes
-								'X-Cache': 'MISS', // Add a debug header
+								'Cache-Control': `public, max-age=${cacheTTL}` // Add a debug header
 							},
 						});
 
@@ -1630,146 +1832,36 @@ export default {
 					}
 				}
 
-				/*
-
-				if (pathname === '/api/users') {
-					// Fetch filter parameters
-					const location = params.get('ubicacion');
-					const minAge = params.get('minAge');
-					const maxAge = params.get('maxAge');
-					const verified = params.get('verified');
-
-					// Create a cache key based on the request URL and filter parameters
-					const cacheKey = new Request(request.url, request);
+				if (pathname === "/api/top-users") {
 					const cache = caches.default;
 
-					// Try to get the response from the cache
+					// Generate a unique cache key for this request
+					let cacheKey = new Request(request.url); // Unique cache key per request
 					let cachedResponse = await cache.match(cacheKey);
 
 					if (cachedResponse) {
-						// If cached response exists, return it
-						console.log('Serving from cache for filters:', { location, minAge, maxAge, verified });
+						console.log("Cache hit: Serving cached response");
 						return cachedResponse;
 					}
 
-					// If not in cache, fetch from the database
-					try {
-						// Build query
-						let query = `
-							SELECT id, username, email, profile_picture, profile_description, user_type, ubicacion, age, verified
-							FROM users
-							WHERE 1=1
-						`;
-
-						// Add filters if present
-						const queryParams = [];
-						if (location) {
-							query += ' AND ubicacion = ?';
-							queryParams.push(location);
-						}
-						if (minAge) {
-							query += ' AND age >= ?';
-							queryParams.push(minAge);
-						}
-						if (maxAge) {
-							query += ' AND age <= ?';
-							queryParams.push(maxAge);
-						}
-						if (verified) {
-							query += ' AND verified = ?';
-							queryParams.push(verified === 'true' ? 1 : 0); // Assuming `verified` is a boolean stored as 1/0 in the database
-						}
-
-						// Execute the query
-						const results = await env.DB.prepare(query).bind(...queryParams).all();
-
-						// Create a response and cache it
-						const response = new Response(JSON.stringify({ data: results }), {
-							headers: {
-								...corsHeaders,
-								'Cache-Control': 'public, max-age=600', // Cache for 10 minutes
-							},
-						});
-
-						// Store the response in the cache
-						await cache.put(cacheKey, response.clone());
-						console.log('Caching response for filters:', { location, minAge, maxAge, verified });
-
-						return response;
-					} catch (error) {
-						// Handle database errors
-						console.error('Database error:', error.message);
-						return new Response('Error querying database: ' + error.message, { status: 500, headers: { ...corsHeaders } });
-					}
-				}*/
-
-				/*
-				if (pathname === "/api/users") {
-					// Fetch filter parameters
-					const location = params.get("ubicacion");
-					const minAge = params.get("minAge");
-					const maxAge = params.get("maxAge");
-					const verified = params.get("verified");
-
-					// Build query
-					let query = `
-					  SELECT id, username, email, profile_picture, profile_description, user_type, ubicacion, age, verified
-					  FROM users
-					  WHERE 1=1
-					`;
-
-					// Add filters if present
-					const queryParams = [];
-					if (location) {
-						query += " AND ubicacion = ?";
-						queryParams.push(location);
-					}
-					if (minAge) {
-						query += " AND age >= ?";
-						queryParams.push(minAge);
-					}
-					if (maxAge) {
-						query += " AND age <= ?";
-						queryParams.push(maxAge);
-					}
-					if (verified) {
-						query += " AND verified = ?";
-						queryParams.push(verified === "true" ? 1 : 0); // Assuming `verified` is a boolean stored as 1/0 in the database
-					}
-
-					try {
-						// Execute the query
-						const results = await env.DB.prepare(query).bind(...queryParams).all();
-
-						// Return results
-						return new Response(JSON.stringify({ data: results }), {
-							headers: { ...corsHeaders },
-						});
-					} catch (error) {
-						return new Response("Error querying database: " + error.message, { status: 500, headers: { ...corsHeaders } });
-					}
-				}
-					*/
-
-				if (pathname === "/api/top-users") {
 					try {
 						// Query to get the 5 most followed users
 						const mostFollowedQuery = `
-							SELECT u.id, u.username, u.profile_picture, u.profile_description, COUNT(f.follower_id) AS follower_count
-							FROM users u
-							LEFT JOIN followers f ON u.id = f.followed_id
-							GROUP BY u.id
-							ORDER BY follower_count DESC
-							LIMIT 5;
-						`;
+						SELECT u.id, u.username, u.profile_picture, u.profile_description, COUNT(f.follower_id) AS follower_count
+						FROM users u
+						LEFT JOIN followers f ON u.id = f.followed_id
+						GROUP BY u.id
+						ORDER BY follower_count DESC
+						LIMIT 5;
+					  `;
 
 						// Query to get the 5 newest users
 						const newestUsersQuery = `
-							SELECT id, username, profile_picture, profile_description, created_at
-							FROM users
-							ORDER BY created_at DESC
-							LIMIT 5;
-						`;
+						SELECT id, username, profile_picture, profile_description, created_at
+						FROM users
+						ORDER BY created_at DESC
+						LIMIT 5;
+					  `;
 
 						// Execute both queries
 						const mostFollowedResults = await env.DB.prepare(mostFollowedQuery).all();
@@ -1781,13 +1873,17 @@ export default {
 							newest_users: newestUsersResults.results,
 						};
 
-						// Return the combined results
-						return new Response(JSON.stringify(responseData), {
-							headers: { ...corsHeaders },
+						// Convert results to JSON response
+						let response = new Response(JSON.stringify(responseData), {
+							headers: { ...corsHeaders, "Cache-Control": "max-age=300" }, // Cache for 5 minutes
 						});
+
+						// Store the response in cache
+						await cache.put(cacheKey, response.clone());
+
+						return response;
 					} catch (error) {
-						console.error('error', error)
-						console.error('error', error.message)
+						console.error("Database query error:", error);
 						return new Response("Error querying database: " + error.message, { status: 500, headers: { ...corsHeaders } });
 					}
 				}

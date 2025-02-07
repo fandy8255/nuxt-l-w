@@ -1,3 +1,4 @@
+import { Console } from 'console';
 import crypto from 'crypto';
 
 export default {
@@ -144,6 +145,26 @@ export default {
 			// Compare the signatures
 			return signature === expectedSignature;
 		};
+
+		async function isAdmin(userId, env) {
+			try {
+				// Query the database to check if the user is an admin
+				const results = await env.DB.prepare('SELECT is_admin FROM users WHERE id = ?')
+					.bind(userId)
+					.first();
+
+				// If the user is not found, return false
+				if (!results) {
+					return false;
+				}
+
+				// Return the admin status
+				return results.is_admin === 1; // Assuming is_admin is stored as 1 for true and 0 for false
+			} catch (error) {
+				console.error('Error checking admin status:', error.message);
+				throw error; // Re-throw the error to handle it in the calling function
+			}
+		}
 
 
 		// Handle the preflight OPTIONS request
@@ -963,7 +984,7 @@ export default {
 
 
 			} else {
-
+				/********************************************************************************************************************************************************************************************************** */
 
 				if (pathname === '/api/profile') {
 					try {
@@ -1888,6 +1909,600 @@ export default {
 					}
 				}
 
+				/************************************************************************************************************************************************************************************************************ */
+
+				if (pathname === '/api/ad/check-admin') {
+					try {
+						// Extract the user from the request headers
+						let user = request.headers.get('X-User');
+						user = JSON.parse(user);
+						const userId = user.id;
+
+						// Check if the user ID is provided
+						if (!userId) {
+							return new Response('User ID not provided', { status: 400 });
+						}
+
+						// Query the database to check if the user is an admin
+						const results = await env.DB.prepare('SELECT is_admin FROM users WHERE id = ?')
+							.bind(userId)
+							.first();
+
+						// If the user is not found, return a 404 error
+						if (!results) {
+							return new Response('User not found', { status: 404 });
+						}
+
+						// Check if the user is an admin
+						const isAdmin = results.is_admin;
+
+						// Return the response indicating whether the user is an admin
+						return new Response(JSON.stringify({ is_admin: isAdmin }), {
+							headers: {
+								'Content-Type': 'application/json',
+								...corsHeaders, // Assuming you have CORS headers defined
+							},
+						});
+					} catch (error) {
+						// Handle any errors that occur during the process
+						console.error('Error checking admin status:', error.message);
+						return new Response(
+							JSON.stringify({ message: 'Error checking admin status', details: error.message }),
+							{ status: 500, headers: { ...corsHeaders } }
+						);
+					}
+				}
+
+
+				/*
+				if (pathname === '/api/ad/users') {
+					try {
+						// Fetch filter parameters
+						const location = params.get('ubicacion');
+						const minAge = params.get('minAge');
+						const maxAge = params.get('maxAge');
+						const verified = params.get('verified');
+						const isBanned = params.get('isBanned');
+						const bannedUntil = params.get('bannedUntil');
+						const minReportedByUser = params.get('minReportedByUser');
+						const maxReportedByUser = params.get('maxReportedByUser');
+						const minReportedUser = params.get('minReportedUser');
+						const maxReportedUser = params.get('maxReportedUser');
+						const minBlockedBy = params.get('minBlockedBy');
+						const maxBlockedBy = params.get('maxBlockedBy');
+						const minBlockedUser = params.get('minBlockedUser');
+						const maxBlockedUser = params.get('maxBlockedUser');
+
+						// Build the base query
+						let query = `
+							SELECT
+								users.id,
+								users.username,
+								users.email,
+								users.profile_picture,
+								users.profile_description,
+								users.user_type,
+								users.ubicacion,
+								users.age,
+								users.created_at,
+								users.is_banned,
+								users.banned_until,
+								users.verified,
+								COUNT(DISTINCT reported_by_user.id) AS reported_by_user_count, -- Count of reports where the user is the reporter
+								COUNT(DISTINCT reported_user.id) AS reported_user_count, -- Count of reports where the user is the reported
+								COUNT(DISTINCT blocked_by_counts.id) AS blocked_by_count, -- Count of times the user has been blocked by others
+								COUNT(DISTINCT blocked_user_counts.id) AS blocked_user_count -- Count of times the user has blocked others
+							FROM users
+							LEFT JOIN reports AS reported_by_user ON reported_by_user.reporter_id = users.id -- Reports where the user is the reporter
+							LEFT JOIN reports AS reported_user ON reported_user.reported_id = users.id -- Reports where the user is the reported
+							LEFT JOIN blocked_users AS blocked_by_counts ON blocked_by_counts.blocked_user = users.id -- Count of times the user has been blocked by others
+							LEFT JOIN blocked_users AS blocked_user_counts ON blocked_user_counts.blocked_by = users.id -- Count of times the user has blocked others
+							WHERE 1=1
+						`;
+
+						// Add non-aggregate filters to the WHERE clause
+						const queryParams = [];
+						if (location) {
+							query += ' AND users.ubicacion = ?';
+							queryParams.push(location);
+						}
+						if (minAge) {
+							query += ' AND users.age >= ?';
+							queryParams.push(minAge);
+						}
+						if (maxAge) {
+							query += ' AND users.age <= ?';
+							queryParams.push(maxAge);
+						}
+						if (verified) {
+							query += ' AND users.verified = ?';
+							queryParams.push(verified === 'true' ? 1 : 0);
+						}
+						if (isBanned) {
+							query += ' AND users.is_banned = ?';
+							queryParams.push(isBanned === '1' ? 1 : 0);
+						}
+						if (bannedUntil) {
+							query += ' AND users.banned_until <= ?';
+							queryParams.push(bannedUntil);
+						}
+
+						// Group by user ID to ensure correct aggregation
+						query += ' GROUP BY users.id';
+
+						// Add aggregate filters to the HAVING clause
+						let havingClause = '';
+						if (minReportedByUser) {
+							havingClause += ' AND COUNT(DISTINCT reported_by_user.id) >= ?';
+							queryParams.push(parseInt(minReportedByUser));
+						}
+						if (maxReportedByUser) {
+							havingClause += ' AND COUNT(DISTINCT reported_by_user.id) <= ?';
+							queryParams.push(parseInt(maxReportedByUser));
+						}
+						if (minReportedUser) {
+							havingClause += ' AND COUNT(DISTINCT reported_user.id) >= ?';
+							queryParams.push(parseInt(minReportedUser));
+						}
+						if (maxReportedUser) {
+							havingClause += ' AND COUNT(DISTINCT reported_user.id) <= ?';
+							queryParams.push(parseInt(maxReportedUser));
+						}
+						if (minBlockedBy) {
+							havingClause += ' AND COUNT(DISTINCT blocked_by_counts.id) >= ?';
+							queryParams.push(parseInt(minBlockedBy));
+						}
+						if (maxBlockedBy) {
+							havingClause += ' AND COUNT(DISTINCT blocked_by_counts.id) <= ?';
+							queryParams.push(parseInt(maxBlockedBy));
+						}
+						if (minBlockedUser) {
+							havingClause += ' AND COUNT(DISTINCT blocked_user_counts.id) >= ?';
+							queryParams.push(parseInt(minBlockedUser));
+						}
+						if (maxBlockedUser) {
+							havingClause += ' AND COUNT(DISTINCT blocked_user_counts.id) <= ?';
+							queryParams.push(parseInt(maxBlockedUser));
+						}
+
+						// Append the HAVING clause if there are aggregate filters
+						if (havingClause) {
+							query += ' HAVING 1=1' + havingClause;
+						}
+
+						// Execute the query
+						const results = await env.DB.prepare(query).bind(...queryParams).all();
+
+						// Return the response
+						return new Response(JSON.stringify({ data: results }), {
+							headers: {
+								'Content-Type': 'application/json',
+								...corsHeaders,
+							},
+						});
+					} catch (error) {
+						console.error('Error fetching users:', error.message);
+						return new Response(
+							JSON.stringify({ message: 'Error fetching users', details: error.message }),
+							{ status: 500, headers: { ...corsHeaders } }
+						);
+					}
+				}*/
+
+				/*
+
+				if (pathname === '/api/ad/users') {
+					try {
+						// Fetch filter parameters
+						const location = params.get('ubicacion');
+						const minAge = params.get('minAge');
+						const maxAge = params.get('maxAge');
+						const verified = params.get('verified');
+						const isBanned = params.get('isBanned');
+						const bannedUntil = params.get('bannedUntil');
+						const minReportedByUser = params.get('minReportedByUser');
+						const maxReportedByUser = params.get('maxReportedByUser');
+						const minReportedUser = params.get('minReportedUser');
+						const maxReportedUser = params.get('maxReportedUser');
+						const minBlockedBy = params.get('minBlockedBy');
+						const maxBlockedBy = params.get('maxBlockedBy');
+						const minBlockedUser = params.get('minBlockedUser');
+						const maxBlockedUser = params.get('maxBlockedUser');
+
+						// Build the base query
+						let query = `
+							SELECT
+								users.id,
+								users.username,
+								users.email,
+								users.profile_picture,
+								users.profile_description,
+								users.user_type,
+								users.ubicacion,
+								users.age,
+								users.created_at,
+								users.is_banned,
+								users.banned_until,
+								users.verified,
+								COUNT(DISTINCT reported_by_user.id) AS reported_by_user_count, -- Count of reports where the user is the reporter
+								COUNT(DISTINCT reported_user.id) AS reported_user_count, -- Count of reports where the user is the reported
+								COUNT(DISTINCT blocked_by_counts.id) AS blocked_by_count, -- Count of times the user has been blocked by others
+								COUNT(DISTINCT blocked_user_counts.id) AS blocked_user_count, -- Count of times the user has blocked others
+								COUNT(DISTINCT products.id) AS product_count, -- Count of products for sellers
+								COUNT(DISTINCT threads.thread_id) AS thread_count -- Count of threads where the user is the sender or receiver
+							FROM users
+							LEFT JOIN reports AS reported_by_user ON reported_by_user.reporter_id = users.id -- Reports where the user is the reporter
+							LEFT JOIN reports AS reported_user ON reported_user.reported_id = users.id -- Reports where the user is the reported
+							LEFT JOIN blocked_users AS blocked_by_counts ON blocked_by_counts.blocked_user = users.id -- Count of times the user has been blocked by others
+							LEFT JOIN blocked_users AS blocked_user_counts ON blocked_user_counts.blocked_by = users.id -- Count of times the user has blocked others
+							LEFT JOIN products ON products.user_id = users.id AND users.user_type = 'seller' -- Products for sellers
+							LEFT JOIN threads ON threads.sender = users.id OR threads.receiver = users.id -- Threads where the user is the sender or receiver
+							WHERE 1=1
+						`;
+
+						// Add non-aggregate filters to the WHERE clause
+						const queryParams = [];
+						if (location) {
+							query += ' AND users.ubicacion = ?';
+							queryParams.push(location);
+						}
+						if (minAge) {
+							query += ' AND users.age >= ?';
+							queryParams.push(minAge);
+						}
+						if (maxAge) {
+							query += ' AND users.age <= ?';
+							queryParams.push(maxAge);
+						}
+						if (verified) {
+							query += ' AND users.verified = ?';
+							queryParams.push(verified === 'true' ? 1 : 0);
+						}
+						if (isBanned) {
+							query += ' AND users.is_banned = ?';
+							queryParams.push(isBanned === '1' ? 1 : 0);
+						}
+						if (bannedUntil) {
+							query += ' AND users.banned_until <= ?';
+							queryParams.push(bannedUntil);
+						}
+
+						// Group by user ID to ensure correct aggregation
+						query += ' GROUP BY users.id';
+
+						// Add aggregate filters to the HAVING clause
+						let havingClause = '';
+						if (minReportedByUser) {
+							havingClause += ' AND COUNT(DISTINCT reported_by_user.id) >= ?';
+							queryParams.push(parseInt(minReportedByUser));
+						}
+						if (maxReportedByUser) {
+							havingClause += ' AND COUNT(DISTINCT reported_by_user.id) <= ?';
+							queryParams.push(parseInt(maxReportedByUser));
+						}
+						if (minReportedUser) {
+							havingClause += ' AND COUNT(DISTINCT reported_user.id) >= ?';
+							queryParams.push(parseInt(minReportedUser));
+						}
+						if (maxReportedUser) {
+							havingClause += ' AND COUNT(DISTINCT reported_user.id) <= ?';
+							queryParams.push(parseInt(maxReportedUser));
+						}
+						if (minBlockedBy) {
+							havingClause += ' AND COUNT(DISTINCT blocked_by_counts.id) >= ?';
+							queryParams.push(parseInt(minBlockedBy));
+						}
+						if (maxBlockedBy) {
+							havingClause += ' AND COUNT(DISTINCT blocked_by_counts.id) <= ?';
+							queryParams.push(parseInt(maxBlockedBy));
+						}
+						if (minBlockedUser) {
+							havingClause += ' AND COUNT(DISTINCT blocked_user_counts.id) >= ?';
+							queryParams.push(parseInt(minBlockedUser));
+						}
+						if (maxBlockedUser) {
+							havingClause += ' AND COUNT(DISTINCT blocked_user_counts.id) <= ?';
+							queryParams.push(parseInt(maxBlockedUser));
+						}
+
+						// Append the HAVING clause if there are aggregate filters
+						if (havingClause) {
+							query += ' HAVING 1=1' + havingClause;
+						}
+
+						// Execute the query
+						const results = await env.DB.prepare(query).bind(...queryParams).all();
+
+						// Return the response
+						return new Response(JSON.stringify({ data: results }), {
+							headers: {
+								'Content-Type': 'application/json',
+								...corsHeaders,
+							},
+						});
+					} catch (error) {
+						console.error('Error fetching users:', error.message);
+						return new Response(
+							JSON.stringify({ message: 'Error fetching users', details: error.message }),
+							{ status: 500, headers: { ...corsHeaders } }
+						);
+					}
+				}*/
+
+				if (pathname === '/api/ad/users') {
+					try {
+						// Fetch filter parameters
+						const location = params.get('ubicacion');
+						const minAge = params.get('minAge');
+						const maxAge = params.get('maxAge');
+						const verified = params.get('verified');
+						const isBanned = params.get('isBanned');
+						const bannedUntil = params.get('bannedUntil');
+						const minReportedByUser = params.get('minReportedByUser');
+						const maxReportedByUser = params.get('maxReportedByUser');
+						const minReportedUser = params.get('minReportedUser');
+						const maxReportedUser = params.get('maxReportedUser');
+						const minBlockedBy = params.get('minBlockedBy');
+						const maxBlockedBy = params.get('maxBlockedBy');
+						const minBlockedUser = params.get('minBlockedUser');
+						const maxBlockedUser = params.get('maxBlockedUser');
+
+						// Fetch sorting parameters
+						const sortBy = params.get('sortBy'); // Field to sort by (e.g., 'age', 'created_at', 'reported_by_user_count')
+						const sortDirection = params.get('sortDirection'); // Sorting direction ('asc' or 'desc')
+
+						// Build the base query
+						let query = `
+							SELECT
+								users.id,
+								users.username,
+								users.email,
+								users.profile_picture,
+								users.profile_description,
+								users.user_type,
+								users.ubicacion,
+								users.age,
+								users.created_at,
+								users.is_banned,
+								users.banned_until,
+								users.verified,
+								COUNT(DISTINCT reported_by_user.id) AS reported_by_user_count, -- Count of reports where the user is the reporter
+								COUNT(DISTINCT reported_user.id) AS reported_user_count, -- Count of reports where the user is the reported
+								COUNT(DISTINCT blocked_by_counts.id) AS blocked_by_count, -- Count of times the user has been blocked by others
+								COUNT(DISTINCT blocked_user_counts.id) AS blocked_user_count, -- Count of times the user has blocked others
+								COUNT(DISTINCT products.id) AS product_count, -- Count of products for sellers
+								COUNT(DISTINCT threads.thread_id) AS thread_count -- Count of threads where the user is the sender or receiver
+							FROM users
+							LEFT JOIN reports AS reported_by_user ON reported_by_user.reporter_id = users.id -- Reports where the user is the reporter
+							LEFT JOIN reports AS reported_user ON reported_user.reported_id = users.id -- Reports where the user is the reported
+							LEFT JOIN blocked_users AS blocked_by_counts ON blocked_by_counts.blocked_user = users.id -- Count of times the user has been blocked by others
+							LEFT JOIN blocked_users AS blocked_user_counts ON blocked_user_counts.blocked_by = users.id -- Count of times the user has blocked others
+							LEFT JOIN products ON products.user_id = users.id AND users.user_type = 'seller' -- Products for sellers
+							LEFT JOIN threads ON threads.sender = users.id OR threads.receiver = users.id -- Threads where the user is the sender or receiver
+							WHERE 1=1
+						`;
+
+						// Add non-aggregate filters to the WHERE clause
+						const queryParams = [];
+						if (location) {
+							query += ' AND users.ubicacion = ?';
+							queryParams.push(location);
+						}
+						if (minAge) {
+							query += ' AND users.age >= ?';
+							queryParams.push(minAge);
+						}
+						if (maxAge) {
+							query += ' AND users.age <= ?';
+							queryParams.push(maxAge);
+						}
+						if (verified) {
+							query += ' AND users.verified = ?';
+							queryParams.push(verified === 'true' ? 1 : 0);
+						}
+						if (isBanned) {
+							query += ' AND users.is_banned = ?';
+							queryParams.push(isBanned === '1' ? 1 : 0);
+						}
+						if (bannedUntil) {
+							query += ' AND users.banned_until <= ?';
+							queryParams.push(bannedUntil);
+						}
+
+						// Group by user ID to ensure correct aggregation
+						query += ' GROUP BY users.id';
+
+						// Add aggregate filters to the HAVING clause
+						let havingClause = '';
+						if (minReportedByUser) {
+							havingClause += ' AND COUNT(DISTINCT reported_by_user.id) >= ?';
+							queryParams.push(parseInt(minReportedByUser));
+						}
+						if (maxReportedByUser) {
+							havingClause += ' AND COUNT(DISTINCT reported_by_user.id) <= ?';
+							queryParams.push(parseInt(maxReportedByUser));
+						}
+						if (minReportedUser) {
+							havingClause += ' AND COUNT(DISTINCT reported_user.id) >= ?';
+							queryParams.push(parseInt(minReportedUser));
+						}
+						if (maxReportedUser) {
+							havingClause += ' AND COUNT(DISTINCT reported_user.id) <= ?';
+							queryParams.push(parseInt(maxReportedUser));
+						}
+						if (minBlockedBy) {
+							havingClause += ' AND COUNT(DISTINCT blocked_by_counts.id) >= ?';
+							queryParams.push(parseInt(minBlockedBy));
+						}
+						if (maxBlockedBy) {
+							havingClause += ' AND COUNT(DISTINCT blocked_by_counts.id) <= ?';
+							queryParams.push(parseInt(maxBlockedBy));
+						}
+						if (minBlockedUser) {
+							havingClause += ' AND COUNT(DISTINCT blocked_user_counts.id) >= ?';
+							queryParams.push(parseInt(minBlockedUser));
+						}
+						if (maxBlockedUser) {
+							havingClause += ' AND COUNT(DISTINCT blocked_user_counts.id) <= ?';
+							queryParams.push(parseInt(maxBlockedUser));
+						}
+
+						// Append the HAVING clause if there are aggregate filters
+						if (havingClause) {
+							query += ' HAVING 1=1' + havingClause;
+						}
+
+						// Add sorting
+						if (sortBy && sortDirection) {
+							const validSortFields = [
+								'age', 'created_at', 'reported_by_user_count', 'reported_user_count',
+								'blocked_by_count', 'blocked_user_count', 'product_count', 'thread_count'
+							];
+							if (validSortFields.includes(sortBy)) {
+								query += ` ORDER BY ${sortBy} ${sortDirection === 'desc' ? 'DESC' : 'ASC'}`;
+							}
+						}
+
+						// Execute the query
+						const results = await env.DB.prepare(query).bind(...queryParams).all();
+
+						// Return the response
+						return new Response(JSON.stringify({ data: results }), {
+							headers: {
+								'Content-Type': 'application/json',
+								...corsHeaders,
+							},
+						});
+					} catch (error) {
+						console.error('Error fetching users:', error.message);
+						return new Response(
+							JSON.stringify({ message: 'Error fetching users', details: error.message }),
+							{ status: 500, headers: { ...corsHeaders } }
+						);
+					}
+				}
+
+
+
+				/*
+
+				if (pathname === '/api/ad/users') {
+					try {
+						// Get filters
+						const location = params.get('ubicacion');
+						const minAge = params.get('minAge');
+						const maxAge = params.get('maxAge');
+						const verified = params.get('verified');
+						const isBanned = params.get('isBanned');
+						const minReportedByUser = params.get('minReportedByUser');
+						const maxReportedByUser = params.get('maxReportedByUser');
+						const minReportedUser = params.get('minReportedUser');
+						const maxReportedUser = params.get('maxReportedUser');
+						const minBlockedBy = params.get('minBlockedBy');
+						const maxBlockedBy = params.get('maxBlockedBy');
+						const minBlockedUser = params.get('minBlockedUser');
+						const maxBlockedUser = params.get('maxBlockedUser');
+
+						console.log('minreportedby ', minReportedByUser)
+
+						// Build query
+						let query = `
+							SELECT
+								users.id,
+								users.username,
+								users.email,
+								users.profile_picture,
+								users.profile_description,
+								users.user_type,
+								users.ubicacion,
+								users.age,
+								users.created_at,
+								users.is_banned,
+								users.banned_until,
+								users.verified,
+								(SELECT COUNT(*) FROM reports WHERE reports.reporter_id = users.id) AS reported_by_user_count,
+								(SELECT COUNT(*) FROM reports WHERE reports.reported_id = users.id) AS reported_user_count,
+								(SELECT COUNT(*) FROM blocked_users WHERE blocked_users.blocked_user = users.id) AS blocked_by_count,
+								(SELECT COUNT(*) FROM blocked_users WHERE blocked_users.blocked_by = users.id) AS blocked_user_count
+							FROM users
+							WHERE 1=1
+						`;
+
+						const queryParams = [];
+						if (location) {
+							query += ' AND users.ubicacion = ?';
+							queryParams.push(location);
+						}
+						if (minAge) {
+							query += ' AND users.age >= ?';
+							queryParams.push(minAge);
+						}
+						if (maxAge) {
+							query += ' AND users.age <= ?';
+							queryParams.push(maxAge);
+						}
+						if (verified) {
+							query += ' AND users.verified = ?';
+							queryParams.push(verified === 'true' ? 1 : 0);
+						}
+						if (isBanned) {
+							query += ' AND users.is_banned = ?';
+							queryParams.push(isBanned === '1' ? 1 : 0);
+						}
+						if (minReportedByUser) {
+							console.log('got it inside minreportedby ', minReportedByUser)
+							//query += ` AND (SELECT COUNT(*) FROM reports WHERE reports.reporter_id = users.id) >= ?`;
+							query +=' AND reported_by_user_count >= ?'
+							queryParams.push(parseInt(minReportedByUser));
+						}
+						if (maxReportedByUser) {
+							query += ` AND (SELECT COUNT(*) FROM reports WHERE reports.reporter_id = users.id) <= ?`;
+							queryParams.push(maxReportedByUser);
+						}
+						if (minReportedUser) {
+							query += ` AND (SELECT COUNT(*) FROM reports WHERE reports.reported_id = users.id) >= ?`;
+							queryParams.push(minReportedUser);
+						}
+						if (maxReportedUser) {
+							query += ` AND (SELECT COUNT(*) FROM reports WHERE reports.reported_id = users.id) <= ?`;
+							queryParams.push(maxReportedUser);
+						}
+						if (minBlockedBy) {
+							query += ` AND (SELECT COUNT(*) FROM blocked_users WHERE blocked_users.blocked_user = users.id) >= ?`;
+							queryParams.push(minBlockedBy);
+						}
+						if (maxBlockedBy) {
+							query += ` AND (SELECT COUNT(*) FROM blocked_users WHERE blocked_users.blocked_user = users.id) <= ?`;
+							queryParams.push(maxBlockedBy);
+						}
+						if (minBlockedUser) {
+							query += ` AND (SELECT COUNT(*) FROM blocked_users WHERE blocked_users.blocked_by = users.id) >= ?`;
+							queryParams.push(minBlockedUser);
+						}
+						if (maxBlockedUser) {
+							query += ` AND (SELECT COUNT(*) FROM blocked_users WHERE blocked_users.blocked_by = users.id) <= ?`;
+							queryParams.push(maxBlockedUser);
+						}
+
+						// Execute query
+						const results = await env.DB.prepare(query).bind(...queryParams).all();
+
+						// Return response
+						return new Response(JSON.stringify({ data: results, query:query }), {
+							headers: {
+								'Content-Type': 'application/json',
+								...corsHeaders,
+							},
+						});
+					} catch (error) {
+						console.error('Error fetching users:', error.message);
+						return new Response(
+							JSON.stringify({ message: 'Error fetching users', details: error.message }),
+							{ status: 500, headers: { ...corsHeaders } }
+						);
+					}
+				}*/
+
 
 
 
@@ -1896,10 +2511,6 @@ export default {
 				}
 
 			}
-
-
-
-
 
 		} catch (error) {
 			// Handle errors and include CORS headers in error response

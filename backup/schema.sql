@@ -1,7 +1,7 @@
 
 CREATE TABLE users (
-    id TEXT PRIMARY KEY, -- unique ID for each seller
-    username TEXT,         -- username for each seller
+    id TEXT PRIMARY KEY,
+    username TEXT,
     email TEXT NOT NULL UNIQUE,
 	profile_picture TEXT ,
 	profile_description TEXT,
@@ -11,11 +11,12 @@ CREATE TABLE users (
 	verified INTEGER DEFAULT 0,
 	is_admin BOOLEAN DEFAULT 0,
 	is_banned BOOLEAN DEFAULT 0,
+	cnt_user BOOLEAN DEFAULT 0,
 	created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 	banned_until TIMESTAMP
 );
 
--- Create the 'products' table
+
 
 CREATE TABLE products (
     id TEXT PRIMARY KEY, -- Auto-incrementing unique ID for each product
@@ -32,7 +33,7 @@ CREATE TABLE products (
 
 
 CREATE TABLE product_images (
-    id INTEGER PRIMARY KEY AUTOINCREMENT, -- Unique ID for each image
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
     product_id INTEGER,          -- Foreign key referencing the product
     image_url TEXT NOT NULL,              -- URL of the image
     is_primary BOOLEAN DEFAULT FALSE,     -- Flag for the primary image
@@ -69,12 +70,10 @@ CREATE TABLE threads (
 	thread_title TEXT NOT NULL,
     sender TEXT NOT NULL,
     receiver TEXT NOT NULL,
-    is_deleted BOOLEAN DEFAULT FALSE,
-    deleted_at TIMESTAMP NULL,
     created_at TIMESTAMP ,
     last_updated_at TIMESTAMP ,
-    FOREIGN KEY (sender) REFERENCES users(id),
-    FOREIGN KEY (receiver) REFERENCES users(id)
+    FOREIGN KEY (sender) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (receiver) REFERENCES users(id) ON DELETE CASCADE
 );
 
 -- Create messages table
@@ -115,4 +114,15 @@ CREATE TABLE reports (
     FOREIGN KEY (reporter_id) REFERENCES users(id) ON DELETE CASCADE,
     FOREIGN KEY (reported_id) REFERENCES users(id) ON DELETE CASCADE,
     UNIQUE(product_id, reporter_id)       -- Ensure a user can report a product only once
+);
+
+
+CREATE TABLE blocked_users (
+    id TEXT PRIMARY KEY,                  -- Unique ID for each block record
+    blocked_by TEXT NOT NULL,             -- User who initiated the block (FK to users.id)
+    blocked_user TEXT NOT NULL,           -- User who is blocked (FK to users.id)
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, -- Timestamp of when the block occurred
+    FOREIGN KEY (blocked_by) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (blocked_user) REFERENCES users(id) ON DELETE CASCADE,
+    UNIQUE (blocked_by, blocked_user)     -- Ensure a user can block another user only once
 );

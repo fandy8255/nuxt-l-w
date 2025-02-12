@@ -173,18 +173,18 @@ export default {
 		}
 
 		const authHeader = request.headers.get('Authorization');
-        const timestamp = request.headers.get('X-Timestamp');
+		const timestamp = request.headers.get('X-Timestamp');
 
-        // Reject requests with missing auth headers
-        if (!authHeader || !timestamp) {
+		// Reject requests with missing auth headers
+		if (!authHeader || !timestamp) {
 			console.error('no auth header or timestamp')
-            return new Response('Unauthorized', { status: 401 });
-        }
+			return new Response('Unauthorized', { status: 401 });
+		}
 
-        // Verify HMAC Signature
-        if (!verifyHMAC(authHeader, timestamp)) {
-            return new Response('Unauthorized', { status: 401 });
-        }
+		// Verify HMAC Signature
+		if (!verifyHMAC(authHeader, timestamp)) {
+			return new Response('Unauthorized', { status: 401 });
+		}
 
 
 
@@ -198,6 +198,7 @@ export default {
 
 
 				if (pathname === "/api/user") {
+
 					//console.log('arrived to post req for user')
 					try {
 						const { id, email, username, user_type, ubicacion, age } = await request.json();
@@ -257,74 +258,93 @@ export default {
 
 				}
 
+
 				else if (pathname === '/api/user/update') {
+					try {
+						// Extract user data from headers
+						let user = request.headers.get('X-User');
+						user = JSON.parse(user);
+						const userId = user.id;
 
-					let user = request.headers.get('X-User');
-					user = JSON.parse(user)
-					const userId = user.id
-
-					if (!userId) {
-						return new Response('Access denied', { status: 400 });
-					}
-
-					async function updateUser(request, env, userId) {
-
-						let user = await getUserById(userId)
-						let username = user.username
-
-						const formData = await request.formData();
-						const file = formData.get('file')
-						let newImagePath = ''
-
-						if (file) {
-							console.log('got user', user)
-							if (user) {
-								let profile_picture = user.profile_picture
-								console.log('profile_pic', profile_picture)
-								if (profile_picture) {
-									let deleted = await deleteImage(profile_picture)
-									console.log('deleted', deleted)
-									newImagePath = await uploadImage(username, 'profile_image', file)
-									console.log('found profile image and new one is', newImagePath)
-								} else {
-									console.log('didnt find profile pic')
-									newImagePath = await uploadImage(username, 'profile_image', file)
-									console.log('didnt find profile image and new one is', newImagePath)
-								}
-							}
+						if (!userId) {
+							return new Response('Access denied', { status: 400 });
 						}
 
-						console.log('new image path after', newImagePath)
-
+						// Parse form data
+						const formData = await request.formData();
+						const file = formData.get('file');
 						const description = formData.get('profile_description');
 						const ubicacion = formData.get('ubicacion');
-						//const profilePicture = formData.get('profile_picture'); // Puede manejarse con almacenamiento externo*/
 
-						// Actualizar usuario en la base de datos
-						const queryUpdate = `
-						  UPDATE users
-						  SET username = ?, profile_description = ?, profile_picture = ?, ubicacion =?
-						  WHERE id = ?;`;
-						//const userId = 'user-id-aqui'; // Obtener el ID del usuario actual de la sesión/token
-						let results = await env.DB.prepare(queryUpdate)
-							.bind(username, description, newImagePath, ubicacion, userId)
-							.run();
-						let resultsObj = {
-							profile_description: description,
-							ubicacion: ubicacion,
-							profile_picture: newImagePath,
+						let newImagePath = '';
 
+						// Handle file upload if a new file is provided
+						if (file) {
+							// Fetch the current user to get the existing profile picture
+							const currentUser = await getUserById(userId);
+							if (currentUser.profile_picture) {
+								await deleteImage(currentUser.profile_picture); // Delete the old image
+							}
+							newImagePath = await uploadImage(currentUser.username, 'profile_image', file); // Upload the new image
 						}
-						console.log('results', results)
 
-						return new Response(JSON.stringify({ success: true, data: JSON.stringify(resultsObj) }), {
+						// Dynamically build the SQL query based on provided fields
+						let queryParts = [];
+						let queryParams = [];
+
+						if (description !== null) {
+							queryParts.push('profile_description = ?');
+							queryParams.push(description);
+						}
+						if (newImagePath) {
+							queryParts.push('profile_picture = ?');
+							queryParams.push(newImagePath);
+						}
+						if (ubicacion !== null) {
+							queryParts.push('ubicacion = ?');
+							queryParams.push(ubicacion);
+						}
+
+						// If no fields are provided to update, return an error
+						if (queryParts.length === 0) {
+							return new Response(JSON.stringify({ success: false, error: 'No fields to update' }), {
+								status: 400,
+								headers: { ...corsHeaders },
+							});
+						}
+
+						// Build the final SQL query
+						const queryUpdate = `
+								UPDATE users
+								SET ${queryParts.join(', ')}
+								WHERE id = ?;
+							`;
+						queryParams.push(userId);
+
+						// Execute the query
+						await env.DB.prepare(queryUpdate).bind(...queryParams).run();
+
+						// Prepare the response object
+						let resultsObj = {
+							profile_description: description || user.profile_description,
+							ubicacion: ubicacion || user.ubicacion,
+							profile_picture: newImagePath || user.profile_picture,
+						};
+
+						return new Response(JSON.stringify({ success: true, data: resultsObj }), {
 							status: 200,
 							headers: { ...corsHeaders },
 						});
+					} catch (error) {
+						console.error('Error updating user:', error);
+						return new Response(JSON.stringify({ success: false, error: 'Internal server error' }), {
+							status: 500,
+							headers: { ...corsHeaders },
+						});
 					}
-					return updateUser(request, env, userId);
+				}
 
-				} else if (pathname === '/api/uploadProduct') {
+				else if (pathname === '/api/uploadProduct') {
 
 
 					const contentType = request.headers.get('Content-Type') || '';
@@ -726,8 +746,6 @@ export default {
 						console.log('got the request')
 						const { receiver, content, title } = await request.json();
 
-
-
 						let senderObj = request.headers.get('X-User');
 						senderObj = JSON.parse(senderObj);
 						const sender = senderObj.id;
@@ -753,7 +771,6 @@ export default {
 						  SELECT thread_id FROM threads
 						  WHERE (sender = ? AND receiver = ?)
 							 OR (sender = ? AND receiver = ?)
-							 AND is_deleted = 0
 						  LIMIT 1
 						`;
 
@@ -770,19 +787,19 @@ export default {
 						if (!thread_id) {
 							//console.log('no thread id found')
 							const newThreadQuery = `
-							INSERT INTO threads (thread_id, thread_title, sender, receiver, is_deleted, created_at, last_updated_at)
-							VALUES (?, ?, ?, ?, ?, ?, ?)
+							INSERT INTO threads (thread_id, thread_title, sender, receiver, created_at, last_updated_at)
+							VALUES (?, ?, ?, ?, ?, ?)
 						  `;
 							thread_id = crypto.randomUUID();
 							console.log('randomthread id:', thread_id)
-							await env.DB.prepare(newThreadQuery).bind(thread_id, title, sender, receiver, 0, now, now).run();
+							await env.DB.prepare(newThreadQuery).bind(thread_id, title, sender, receiver, now, now).run();
 							console.log('finished creating thread')
 						}
 
 						// Insert the message into the messages table
 						const insertMessageQuery = `
-						  INSERT INTO messages (message_id, thread_id, message_owner, receiver, content, is_read, is_deleted, created_at)
-						  VALUES (?, ?, ?, ?, ?, FALSE, FALSE, ?)
+						  INSERT INTO messages (message_id, thread_id, message_owner, receiver, content, is_read, created_at)
+						  VALUES (?, ?, ?, ?, ?, FALSE, ?)
 						`;
 						const message_id = crypto.randomUUID();
 						await env.DB.prepare(insertMessageQuery)
@@ -981,6 +998,276 @@ export default {
 					}
 				}
 
+				/********************************************************************************************************************************************************************* */
+
+				if (pathname === '/api/ad/ban-user') {
+					try {
+						// Extract admin user data from headers
+						console.log('request to ban was hit')
+						let user = request.headers.get('X-User');
+						user = JSON.parse(user);
+						const user_Id = user.id;
+						const is_admin = await isAdmin(user_Id, env)
+						console.log('request was from admin', is_admin)
+
+						if (!is_admin) {
+							console.error('unathorized user tried', user_Id)
+							return new Response(
+								JSON.stringify({ message: 'Error banning users' }),
+								{ status: 500, headers: { ...corsHeaders } }
+							);
+
+						}
+
+						// Parse the request body
+						const requestBody = await request.json();
+						const { userId, bannedUntil } = requestBody;
+						console.log('uID', userId)
+						console.log('banned until', bannedUntil)
+
+						// Validate input
+						if (!userId || !bannedUntil) {
+							console.error('Missing required fields: userId or bannedUntil')
+							return new Response(JSON.stringify({ success: false, error: 'Missing required fields: userId or bannedUntil' }), {
+								status: 400,
+								headers: { ...corsHeaders },
+							});
+						}
+
+						// Validate bannedUntil timestamp
+						const bannedUntilDate = new Date(bannedUntil);
+						if (isNaN(bannedUntilDate.getTime())) {
+							console.error('Invalid bannedUntil timestamp')
+							return new Response(JSON.stringify({ success: false, error: 'Invalid bannedUntil timestamp' }), {
+								status: 400,
+								headers: { ...corsHeaders },
+							});
+						}
+
+						// Update the user's banned status in the database
+						const query = `
+							UPDATE users
+							SET is_banned = ?, banned_until = ?
+							WHERE id = ?;
+						`;
+						const result = await env.DB.prepare(query)
+							.bind(1, bannedUntil, userId)
+							.run();
+
+						// Check if the user was updated
+						if (result.success) {
+							console.log('User banned successfully')
+							return new Response(JSON.stringify({ success: true, message: 'User banned successfully' }), {
+								status: 200,
+								headers: { ...corsHeaders },
+							});
+						} else {
+							console.log('User not found or could not be banned')
+							return new Response(JSON.stringify({ success: false, error: 'User not found or could not be banned' }), {
+								status: 404,
+								headers: { ...corsHeaders },
+							});
+						}
+					} catch (error) {
+						console.error('Error banning user:', error);
+						return new Response(JSON.stringify({ success: false, error: 'Internal server error' }), {
+							status: 500,
+							headers: { ...corsHeaders },
+						});
+					}
+				}
+
+				if (pathname === '/api/ad/unban-user') {
+					try {
+						// Extract admin user data from headers
+						let user = request.headers.get('X-User');
+						user = JSON.parse(user);
+						const user_Id = user.id;
+						const is_admin = await isAdmin(user_Id, env)
+
+						if (!is_admin) {
+							console.error('unathorized user tried', userId)
+							return new Response(
+								JSON.stringify({ message: 'Error fetching users' }),
+								{ status: 500, headers: { ...corsHeaders } }
+							);
+
+						}
+
+						// Parse the request body
+						const requestBody = await request.json();
+						const { userId } = requestBody;
+
+						// Validate input
+						if (!userId) {
+							return new Response(JSON.stringify({ success: false, error: 'Missing required field: userId' }), {
+								status: 400,
+								headers: { ...corsHeaders },
+							});
+						}
+
+						// Update the user's banned status in the database
+						const query = `
+							UPDATE users
+							SET is_banned = ?, banned_until = NULL
+							WHERE id = ?;
+						`;
+						const result = await env.DB.prepare(query)
+							.bind(0, userId) // Set is_banned to 0 (false) and banned_until to NULL
+							.run();
+
+						// Check if the user was updated
+						if (result.success) {
+							return new Response(JSON.stringify({ success: true, message: 'User unbanned successfully' }), {
+								status: 200,
+								headers: { ...corsHeaders },
+							});
+						} else {
+							return new Response(JSON.stringify({ success: false, error: 'User not found or could not be unbanned' }), {
+								status: 404,
+								headers: { ...corsHeaders },
+							});
+						}
+					} catch (error) {
+						console.error('Error unbanning user:', error);
+						return new Response(JSON.stringify({ success: false, error: 'Internal server error' }), {
+							status: 500,
+							headers: { ...corsHeaders },
+						});
+					}
+				}
+				if (pathname === '/api/ad/toggle-product-visibility') {
+					try {
+						// Extract admin user data from headers
+						let user = request.headers.get('X-User');
+						user = JSON.parse(user);
+						const userId = user.id;
+						const is_admin = await isAdmin(userId, env)
+
+						if (!is_admin) {
+							console.error('unathorized user tried', userId)
+							return new Response(
+								JSON.stringify({ message: 'Error' }),
+								{ status: 500, headers: { ...corsHeaders } }
+							);
+
+						}
+
+						// Parse the request body
+						const requestBody = await request.json();
+						const { productId } = requestBody;
+
+						// Validate input
+						if (!productId) {
+							return new Response(JSON.stringify({ success: false, error: 'Missing required field: productId' }), {
+								status: 400,
+								headers: { ...corsHeaders },
+							});
+						}
+
+						// Fetch the current visibility status of the product
+						const fetchQuery = `
+							SELECT is_visible FROM products WHERE id = ?;
+						`;
+						const fetchResult = await env.DB.prepare(fetchQuery)
+							.bind(productId)
+							.first();
+
+						if (!fetchResult) {
+							return new Response(JSON.stringify({ success: false, error: 'Product not found' }), {
+								status: 404,
+								headers: { ...corsHeaders },
+							});
+						}
+
+						// Toggle the visibility status
+						const newVisibilityStatus = fetchResult.is_visible ? 0 : 1;
+
+						// Update the product's visibility status in the database
+						const updateQuery = `
+							UPDATE products
+							SET is_visible = ?
+							WHERE id = ?;
+						`;
+						const updateResult = await env.DB.prepare(updateQuery)
+							.bind(newVisibilityStatus, productId)
+							.run();
+
+						// Check if the product was updated
+						if (updateResult.success) {
+							return new Response(JSON.stringify({ success: true, message: 'Product visibility updated successfully', is_visible: newVisibilityStatus }), {
+								status: 200,
+								headers: { ...corsHeaders },
+							});
+						} else {
+							return new Response(JSON.stringify({ success: false, error: 'Failed to update product visibility' }), {
+								status: 500,
+								headers: { ...corsHeaders },
+							});
+						}
+					} catch (error) {
+						console.error('Error toggling product visibility:', error);
+						return new Response(JSON.stringify({ success: false, error: 'Internal server error' }), {
+							status: 500,
+							headers: { ...corsHeaders },
+						});
+					}
+				}
+
+				if (pathname === '/api/ad/deleteProduct') {
+
+					try {
+
+						const { productId } = await request.json();
+
+						let user = request.headers.get('X-User');
+						user = JSON.parse(user);
+						const userId = user.id;
+						const is_admin = await isAdmin(userId, env)
+
+						if (!is_admin) {
+							console.error('unathorized user tried', userId)
+							return new Response(
+								JSON.stringify({ message: 'Error' }),
+								{ status: 500, headers: { ...corsHeaders } }
+							);
+
+						}
+
+						const imageQuery = `
+									SELECT * FROM product_images
+									WHERE product_id = ?`;
+
+						let imgUrls = await env.DB.prepare(imageQuery).bind(productId).all();
+						//console.log("imgurllss", imgUrls)
+
+						//let path = ""
+						for (const imgUrl of imgUrls.results) {
+							console.log('deleted image url', imgUrl.image_url)
+							await deleteImage(imgUrl.image_url)
+						}
+
+						const query = `
+									DELETE FROM products
+									WHERE id = ?`;
+
+						await env.DB.prepare(query).bind(productId).run();
+
+						return new Response(JSON.stringify({ success: true, imgUrls: imgUrls.results, productId: productId }), {
+							status: 200,
+							headers: { ...corsHeaders },
+						});
+
+					} catch (error) {
+						console.error('error', error)
+						return new Response('error with the request', {
+							status: 400,
+							headers: { ...corsHeaders },
+						});
+					}
+
+				}
+
 
 
 			} else {
@@ -988,6 +1275,7 @@ export default {
 
 				if (pathname === '/api/profile') {
 					try {
+
 						let user = request.headers.get('X-User');
 						user = JSON.parse(user);
 						const userId = user.id;
@@ -1427,7 +1715,7 @@ export default {
 						const { results: thread } = await env.DB.prepare(`
 							SELECT sender, receiver
 							FROM threads
-							WHERE thread_id = ? AND is_deleted = 0
+							WHERE thread_id = ?
 						`).bind(threadId).all();
 
 						if (!thread.length) {
@@ -1458,7 +1746,7 @@ export default {
 							JOIN threads t ON m.thread_id = t.thread_id
 							JOIN users u1 ON t.sender = u1.id
 							JOIN users u2 ON t.receiver = u2.id
-							WHERE m.thread_id = ? AND m.is_deleted = 0
+							WHERE m.thread_id = ?
 							ORDER BY m.created_at ASC
 						`).bind(threadId).all();
 
@@ -1702,7 +1990,7 @@ export default {
 						}));
 
 						// Convert results to JSON response
-						let response = new Response(JSON.stringify({ data: results , cacheKey:request.url}), {
+						let response = new Response(JSON.stringify({ data: results, cacheKey: request.url }), {
 							headers: { ...corsHeaders, "Cache-Control": `max-age=${cacheTTL}` },
 						});
 
@@ -1719,67 +2007,6 @@ export default {
 						});
 					}
 				}
-
-				/*
-
-				if (pathname === "/api/filter_products") {
-
-					// Fetch filter parameters
-					const category = params.get("product_category");
-					const minPrice = params.get("minPrice");
-					const maxPrice = params.get("maxPrice");
-					const minAge = params.get("minAge");
-					const maxAge = params.get("maxAge");
-					const ubicacion = params.get("ubicacion");
-
-					// Build query
-
-					let query = `
-					SELECT products.id, product_name, product_price, product_description, product_category, product_url, users.username, users.age, users.ubicacion
-					FROM products
-					INNER JOIN users ON products.user_id = users.id
-					WHERE 1=1`
-
-
-
-					// Add filters if present
-					const queryParams = [];
-					if (category) {
-						query += " AND product_category = ?";
-						queryParams.push(category);
-					}
-					if (minPrice) {
-						query += " AND product_price >= ?";
-						queryParams.push(minPrice);
-					}
-					if (maxPrice) {
-						query += " AND product_price <= ?";
-						queryParams.push(maxPrice);
-					}
-					if (minAge) {
-						query += " AND users.age >= ?";
-						queryParams.push(minAge);
-					}
-					if (maxAge) {
-						query += " AND users.age <= ?";
-						queryParams.push(maxAge);
-					}
-					if (ubicacion) {
-						query += " AND users.ubicacion = ?";
-						queryParams.push(ubicacion);
-					}
-					try {
-						const results = await env.DB.prepare(query).bind(...queryParams).all()
-						return new Response(JSON.stringify({ data: results }), {
-							headers: { ...corsHeaders },
-						});
-
-					} catch (error) {
-						console.error('error', error)
-						return new Response("Error querying database: " + error.message, { status: 500 });
-					}
-				}*/
-
 
 
 				if (pathname === '/api/users') {
@@ -1954,9 +2181,24 @@ export default {
 				}
 
 
-				/*
 				if (pathname === '/api/ad/users') {
 					try {
+
+						let user = request.headers.get('X-User');
+						user = JSON.parse(user);
+						const userId = user.id;
+						const is_admin = await isAdmin(userId, env)
+
+						if (!is_admin) {
+							console.error('unathorized user tried', userId)
+							return new Response(
+								JSON.stringify({ message: 'Error fetching users' }),
+								{ status: 500, headers: { ...corsHeaders } }
+							);
+
+						}
+
+						const searchKeyword = params.get('search');
 						// Fetch filter parameters
 						const location = params.get('ubicacion');
 						const minAge = params.get('minAge');
@@ -1972,280 +2214,11 @@ export default {
 						const maxBlockedBy = params.get('maxBlockedBy');
 						const minBlockedUser = params.get('minBlockedUser');
 						const maxBlockedUser = params.get('maxBlockedUser');
+						const minThreadsCount = params.get('minThreadsCount');
+						const maxThreadsCount = params.get('maxThreadsCount');
+						const minProductsCount = params.get('minProductsCount');
+						const maxProductsCount = params.get('maxProductsCount');
 
-						// Build the base query
-						let query = `
-							SELECT
-								users.id,
-								users.username,
-								users.email,
-								users.profile_picture,
-								users.profile_description,
-								users.user_type,
-								users.ubicacion,
-								users.age,
-								users.created_at,
-								users.is_banned,
-								users.banned_until,
-								users.verified,
-								COUNT(DISTINCT reported_by_user.id) AS reported_by_user_count, -- Count of reports where the user is the reporter
-								COUNT(DISTINCT reported_user.id) AS reported_user_count, -- Count of reports where the user is the reported
-								COUNT(DISTINCT blocked_by_counts.id) AS blocked_by_count, -- Count of times the user has been blocked by others
-								COUNT(DISTINCT blocked_user_counts.id) AS blocked_user_count -- Count of times the user has blocked others
-							FROM users
-							LEFT JOIN reports AS reported_by_user ON reported_by_user.reporter_id = users.id -- Reports where the user is the reporter
-							LEFT JOIN reports AS reported_user ON reported_user.reported_id = users.id -- Reports where the user is the reported
-							LEFT JOIN blocked_users AS blocked_by_counts ON blocked_by_counts.blocked_user = users.id -- Count of times the user has been blocked by others
-							LEFT JOIN blocked_users AS blocked_user_counts ON blocked_user_counts.blocked_by = users.id -- Count of times the user has blocked others
-							WHERE 1=1
-						`;
-
-						// Add non-aggregate filters to the WHERE clause
-						const queryParams = [];
-						if (location) {
-							query += ' AND users.ubicacion = ?';
-							queryParams.push(location);
-						}
-						if (minAge) {
-							query += ' AND users.age >= ?';
-							queryParams.push(minAge);
-						}
-						if (maxAge) {
-							query += ' AND users.age <= ?';
-							queryParams.push(maxAge);
-						}
-						if (verified) {
-							query += ' AND users.verified = ?';
-							queryParams.push(verified === 'true' ? 1 : 0);
-						}
-						if (isBanned) {
-							query += ' AND users.is_banned = ?';
-							queryParams.push(isBanned === '1' ? 1 : 0);
-						}
-						if (bannedUntil) {
-							query += ' AND users.banned_until <= ?';
-							queryParams.push(bannedUntil);
-						}
-
-						// Group by user ID to ensure correct aggregation
-						query += ' GROUP BY users.id';
-
-						// Add aggregate filters to the HAVING clause
-						let havingClause = '';
-						if (minReportedByUser) {
-							havingClause += ' AND COUNT(DISTINCT reported_by_user.id) >= ?';
-							queryParams.push(parseInt(minReportedByUser));
-						}
-						if (maxReportedByUser) {
-							havingClause += ' AND COUNT(DISTINCT reported_by_user.id) <= ?';
-							queryParams.push(parseInt(maxReportedByUser));
-						}
-						if (minReportedUser) {
-							havingClause += ' AND COUNT(DISTINCT reported_user.id) >= ?';
-							queryParams.push(parseInt(minReportedUser));
-						}
-						if (maxReportedUser) {
-							havingClause += ' AND COUNT(DISTINCT reported_user.id) <= ?';
-							queryParams.push(parseInt(maxReportedUser));
-						}
-						if (minBlockedBy) {
-							havingClause += ' AND COUNT(DISTINCT blocked_by_counts.id) >= ?';
-							queryParams.push(parseInt(minBlockedBy));
-						}
-						if (maxBlockedBy) {
-							havingClause += ' AND COUNT(DISTINCT blocked_by_counts.id) <= ?';
-							queryParams.push(parseInt(maxBlockedBy));
-						}
-						if (minBlockedUser) {
-							havingClause += ' AND COUNT(DISTINCT blocked_user_counts.id) >= ?';
-							queryParams.push(parseInt(minBlockedUser));
-						}
-						if (maxBlockedUser) {
-							havingClause += ' AND COUNT(DISTINCT blocked_user_counts.id) <= ?';
-							queryParams.push(parseInt(maxBlockedUser));
-						}
-
-						// Append the HAVING clause if there are aggregate filters
-						if (havingClause) {
-							query += ' HAVING 1=1' + havingClause;
-						}
-
-						// Execute the query
-						const results = await env.DB.prepare(query).bind(...queryParams).all();
-
-						// Return the response
-						return new Response(JSON.stringify({ data: results }), {
-							headers: {
-								'Content-Type': 'application/json',
-								...corsHeaders,
-							},
-						});
-					} catch (error) {
-						console.error('Error fetching users:', error.message);
-						return new Response(
-							JSON.stringify({ message: 'Error fetching users', details: error.message }),
-							{ status: 500, headers: { ...corsHeaders } }
-						);
-					}
-				}*/
-
-				/*
-
-				if (pathname === '/api/ad/users') {
-					try {
-						// Fetch filter parameters
-						const location = params.get('ubicacion');
-						const minAge = params.get('minAge');
-						const maxAge = params.get('maxAge');
-						const verified = params.get('verified');
-						const isBanned = params.get('isBanned');
-						const bannedUntil = params.get('bannedUntil');
-						const minReportedByUser = params.get('minReportedByUser');
-						const maxReportedByUser = params.get('maxReportedByUser');
-						const minReportedUser = params.get('minReportedUser');
-						const maxReportedUser = params.get('maxReportedUser');
-						const minBlockedBy = params.get('minBlockedBy');
-						const maxBlockedBy = params.get('maxBlockedBy');
-						const minBlockedUser = params.get('minBlockedUser');
-						const maxBlockedUser = params.get('maxBlockedUser');
-
-						// Build the base query
-						let query = `
-							SELECT
-								users.id,
-								users.username,
-								users.email,
-								users.profile_picture,
-								users.profile_description,
-								users.user_type,
-								users.ubicacion,
-								users.age,
-								users.created_at,
-								users.is_banned,
-								users.banned_until,
-								users.verified,
-								COUNT(DISTINCT reported_by_user.id) AS reported_by_user_count, -- Count of reports where the user is the reporter
-								COUNT(DISTINCT reported_user.id) AS reported_user_count, -- Count of reports where the user is the reported
-								COUNT(DISTINCT blocked_by_counts.id) AS blocked_by_count, -- Count of times the user has been blocked by others
-								COUNT(DISTINCT blocked_user_counts.id) AS blocked_user_count, -- Count of times the user has blocked others
-								COUNT(DISTINCT products.id) AS product_count, -- Count of products for sellers
-								COUNT(DISTINCT threads.thread_id) AS thread_count -- Count of threads where the user is the sender or receiver
-							FROM users
-							LEFT JOIN reports AS reported_by_user ON reported_by_user.reporter_id = users.id -- Reports where the user is the reporter
-							LEFT JOIN reports AS reported_user ON reported_user.reported_id = users.id -- Reports where the user is the reported
-							LEFT JOIN blocked_users AS blocked_by_counts ON blocked_by_counts.blocked_user = users.id -- Count of times the user has been blocked by others
-							LEFT JOIN blocked_users AS blocked_user_counts ON blocked_user_counts.blocked_by = users.id -- Count of times the user has blocked others
-							LEFT JOIN products ON products.user_id = users.id AND users.user_type = 'seller' -- Products for sellers
-							LEFT JOIN threads ON threads.sender = users.id OR threads.receiver = users.id -- Threads where the user is the sender or receiver
-							WHERE 1=1
-						`;
-
-						// Add non-aggregate filters to the WHERE clause
-						const queryParams = [];
-						if (location) {
-							query += ' AND users.ubicacion = ?';
-							queryParams.push(location);
-						}
-						if (minAge) {
-							query += ' AND users.age >= ?';
-							queryParams.push(minAge);
-						}
-						if (maxAge) {
-							query += ' AND users.age <= ?';
-							queryParams.push(maxAge);
-						}
-						if (verified) {
-							query += ' AND users.verified = ?';
-							queryParams.push(verified === 'true' ? 1 : 0);
-						}
-						if (isBanned) {
-							query += ' AND users.is_banned = ?';
-							queryParams.push(isBanned === '1' ? 1 : 0);
-						}
-						if (bannedUntil) {
-							query += ' AND users.banned_until <= ?';
-							queryParams.push(bannedUntil);
-						}
-
-						// Group by user ID to ensure correct aggregation
-						query += ' GROUP BY users.id';
-
-						// Add aggregate filters to the HAVING clause
-						let havingClause = '';
-						if (minReportedByUser) {
-							havingClause += ' AND COUNT(DISTINCT reported_by_user.id) >= ?';
-							queryParams.push(parseInt(minReportedByUser));
-						}
-						if (maxReportedByUser) {
-							havingClause += ' AND COUNT(DISTINCT reported_by_user.id) <= ?';
-							queryParams.push(parseInt(maxReportedByUser));
-						}
-						if (minReportedUser) {
-							havingClause += ' AND COUNT(DISTINCT reported_user.id) >= ?';
-							queryParams.push(parseInt(minReportedUser));
-						}
-						if (maxReportedUser) {
-							havingClause += ' AND COUNT(DISTINCT reported_user.id) <= ?';
-							queryParams.push(parseInt(maxReportedUser));
-						}
-						if (minBlockedBy) {
-							havingClause += ' AND COUNT(DISTINCT blocked_by_counts.id) >= ?';
-							queryParams.push(parseInt(minBlockedBy));
-						}
-						if (maxBlockedBy) {
-							havingClause += ' AND COUNT(DISTINCT blocked_by_counts.id) <= ?';
-							queryParams.push(parseInt(maxBlockedBy));
-						}
-						if (minBlockedUser) {
-							havingClause += ' AND COUNT(DISTINCT blocked_user_counts.id) >= ?';
-							queryParams.push(parseInt(minBlockedUser));
-						}
-						if (maxBlockedUser) {
-							havingClause += ' AND COUNT(DISTINCT blocked_user_counts.id) <= ?';
-							queryParams.push(parseInt(maxBlockedUser));
-						}
-
-						// Append the HAVING clause if there are aggregate filters
-						if (havingClause) {
-							query += ' HAVING 1=1' + havingClause;
-						}
-
-						// Execute the query
-						const results = await env.DB.prepare(query).bind(...queryParams).all();
-
-						// Return the response
-						return new Response(JSON.stringify({ data: results }), {
-							headers: {
-								'Content-Type': 'application/json',
-								...corsHeaders,
-							},
-						});
-					} catch (error) {
-						console.error('Error fetching users:', error.message);
-						return new Response(
-							JSON.stringify({ message: 'Error fetching users', details: error.message }),
-							{ status: 500, headers: { ...corsHeaders } }
-						);
-					}
-				}*/
-
-				if (pathname === '/api/ad/users') {
-					try {
-						// Fetch filter parameters
-						const location = params.get('ubicacion');
-						const minAge = params.get('minAge');
-						const maxAge = params.get('maxAge');
-						const verified = params.get('verified');
-						const isBanned = params.get('isBanned');
-						const bannedUntil = params.get('bannedUntil');
-						const minReportedByUser = params.get('minReportedByUser');
-						const maxReportedByUser = params.get('maxReportedByUser');
-						const minReportedUser = params.get('minReportedUser');
-						const maxReportedUser = params.get('maxReportedUser');
-						const minBlockedBy = params.get('minBlockedBy');
-						const maxBlockedBy = params.get('maxBlockedBy');
-						const minBlockedUser = params.get('minBlockedUser');
-						const maxBlockedUser = params.get('maxBlockedUser');
 
 						// Fetch sorting parameters
 						const sortBy = params.get('sortBy'); // Field to sort by (e.g., 'age', 'created_at', 'reported_by_user_count')
@@ -2284,6 +2257,12 @@ export default {
 
 						// Add non-aggregate filters to the WHERE clause
 						const queryParams = [];
+
+						if (searchKeyword) {
+							query += ' AND users.profile_description LIKE ?';
+							queryParams.push(`%${searchKeyword}%`);
+						}
+
 						if (location) {
 							query += ' AND users.ubicacion = ?';
 							queryParams.push(location);
@@ -2346,6 +2325,22 @@ export default {
 							havingClause += ' AND COUNT(DISTINCT blocked_user_counts.id) <= ?';
 							queryParams.push(parseInt(maxBlockedUser));
 						}
+						if (minThreadsCount) {
+							havingClause += ' AND COUNT(DISTINCT threads.thread_id) >= ?';
+							queryParams.push(parseInt(minThreadsCount));
+						}
+						if (maxThreadsCount) {
+							havingClause += ' AND COUNT(DISTINCT threads.thread_id) <= ?';
+							queryParams.push(parseInt(maxThreadsCount));
+						}
+						if (minProductsCount) {
+							havingClause += ' AND COUNT(DISTINCT products.id) >= ?';
+							queryParams.push(parseInt(minProductsCount));
+						}
+						if (maxProductsCount) {
+							havingClause += ' AND COUNT(DISTINCT products.id) <= ?';
+							queryParams.push(parseInt(maxProductsCount));
+						}
 
 						// Append the HAVING clause if there are aggregate filters
 						if (havingClause) {
@@ -2359,7 +2354,15 @@ export default {
 								'blocked_by_count', 'blocked_user_count', 'product_count', 'thread_count'
 							];
 							if (validSortFields.includes(sortBy)) {
-								query += ` ORDER BY ${sortBy} ${sortDirection === 'desc' ? 'DESC' : 'ASC'}`;
+								if (sortBy === 'reported_by_user_count' || sortBy === 'reported_user_count' || sortBy === 'blocked_by_count' || sortBy === 'blocked_user_count'
+									|| sortBy === 'product_count' || sortBy === 'thread_count') {
+
+									console.log('hitt reported_by_user_count', sortBy)
+									query += ` ORDER BY ${sortBy} ${sortDirection === 'desc' ? 'DESC' : 'ASC'}`;
+								} else {
+									query += ` ORDER BY users.${sortBy} ${sortDirection === 'desc' ? 'DESC' : 'ASC'}`;
+								}
+
 							}
 						}
 
@@ -2367,7 +2370,7 @@ export default {
 						const results = await env.DB.prepare(query).bind(...queryParams).all();
 
 						// Return the response
-						return new Response(JSON.stringify({ data: results }), {
+						return new Response(JSON.stringify({ data: results, query }), {
 							headers: {
 								'Content-Type': 'application/json',
 								...corsHeaders,
@@ -2376,36 +2379,565 @@ export default {
 					} catch (error) {
 						console.error('Error fetching users:', error.message);
 						return new Response(
-							JSON.stringify({ message: 'Error fetching users', details: error.message }),
+							JSON.stringify({ message: 'Error fetching users', details: error.message, query }),
 							{ status: 500, headers: { ...corsHeaders } }
 						);
 					}
 				}
 
+				if (pathname === "/api/ad/products") {
 
+					let user = request.headers.get('X-User');
+					user = JSON.parse(user);
+					const userId = user.id;
+					const is_admin = await isAdmin(userId, env)
 
-				/*
+					if (!is_admin) {
+						console.error('unathorized user tried', userId)
+						return new Response(
+							JSON.stringify({ message: 'Error fetching users' }),
+							{ status: 500, headers: { ...corsHeaders } }
+						);
 
-				if (pathname === '/api/ad/users') {
+					}
+
+					const searchKeyword = params.get('search');
+					const category = params.get("product_category");
+					const minPrice = params.get("minPrice");
+					const maxPrice = params.get("maxPrice");
+					const minCreatedAt = params.get("minCreatedAt");
+					const maxCreatedAt = params.get("maxCreatedAt");
+					const minAge = params.get("minAge");
+					const maxAge = params.get("maxAge");
+					const ubicacion = params.get("ubicacion");
+					const minReports = params.get("minReports");
+					const maxReports = params.get("maxReports");
+					const minLikes = params.get("minLikes");
+					const maxLikes = params.get("maxLikes");
+					const cntUser = params.get('cntUser')
+					const sortBy = params.get('sortBy');
+					const sortDirection = params.get('sortDirection');
+
+					// Build query
+					let query = `
+						SELECT
+							products.id,
+							product_name,
+							product_price,
+							is_visible,
+							products.created_at,
+							product_description,
+							product_category,
+							product_url,
+							users.username,
+							users.age,
+							users.cnt_user,
+							users.profile_picture,
+							users.ubicacion,
+							COUNT(DISTINCT reports.id) AS report_count,
+							COUNT(DISTINCT product_likes.id) AS like_count
+						FROM
+							products
+						INNER JOIN
+							users ON products.user_id = users.id
+						LEFT JOIN
+							reports ON products.id = reports.product_id
+						LEFT JOIN
+							product_likes ON products.id = product_likes.liked_product
+						WHERE 1=1`;
+
+					const queryParams = [];
+					if (category) {
+						query += " AND product_category = ?";
+						queryParams.push(category);
+					}
+					if (minPrice) {
+						query += " AND product_price >= ?";
+						queryParams.push(parseInt(minPrice));
+					}
+					if (maxPrice) {
+						query += " AND product_price <= ?";
+						queryParams.push(parseInt(maxPrice));
+					}
+					if (minAge) {
+						query += " AND users.age >= ?";
+						queryParams.push(parseInt(minAge));
+					}
+					if (maxAge) {
+						query += " AND users.age <= ?";
+						queryParams.push(parseInt(maxAge));
+					}
+					if (ubicacion) {
+						query += " AND users.ubicacion = ?";
+						queryParams.push(ubicacion);
+					}
+					if (minCreatedAt) {
+						query += " AND products.created_at >= ?";
+						queryParams.push(minCreatedAt);
+					}
+					if (maxCreatedAt) {
+						query += " AND products.created_at <= ?";
+						queryParams.push(maxCreatedAt);
+					}
+					if (cntUser) {
+						console.log('got cnt user')
+						query += " AND users.cnt_user = ?";
+						queryParams.push(parseInt(cntUser));
+					}
+					if (searchKeyword) {
+						query += " AND (product_name LIKE ? OR product_description LIKE ?)";
+						queryParams.push(`%${searchKeyword}%`, `%${searchKeyword}%`);
+					}
+
+					query += " GROUP BY products.id";
+
+					if (minReports) {
+						query += " HAVING report_count >= ?";
+						queryParams.push(parseInt(minReports));
+					}
+					if (maxReports) {
+						query += " AND report_count <= ?";
+						queryParams.push(parseInt(maxReports));
+					}
+					if (minLikes) {
+						query += " HAVING like_count >= ?";
+						queryParams.push(parseInt(minLikes));
+					}
+					if (maxLikes) {
+						query += " AND like_count <= ?";
+						queryParams.push(parseInt(maxLikes));
+					}
+
+					if (sortBy && sortDirection) {
+						const validSortFields = {
+							'age': 'users.age',
+							'created_at': 'products.created_at',
+							'report_count': 'report_count',
+							'like_count': 'like_count',
+							'ubicacion': 'users.ubicacion',
+							'product_category': 'products.product_category',
+							'product_price': 'products.product_price'
+						};
+
+						if (validSortFields[sortBy]) {
+							query += ` ORDER BY ${validSortFields[sortBy]} ${sortDirection === 'desc' ? 'DESC' : 'ASC'}`;
+						}
+					}
+
+					// Pagination
+					const page = parseInt(params.get('page')) || 1;
+					const limit = parseInt(params.get('limit')) || 10;
+					const offset = (page - 1) * limit;
+					query += ` LIMIT ? OFFSET ?`;
+					queryParams.push(limit, offset);
+
 					try {
-						// Get filters
+						// Execute the query
+						const results = await env.DB.prepare(query).bind(...queryParams).all();
+
+						// Convert results to JSON response
+						let response = new Response(JSON.stringify({ data: results }), {
+							headers: { ...corsHeaders, },
+						});
+
+						return response;
+
+					} catch (error) {
+						console.error("Database query error:", error);
+						return new Response(JSON.stringify({ error: error.message }), {
+							status: 500,
+							headers: { ...corsHeaders },
+						});
+					}
+				}
+				if (pathname === '/api/ad/threads') {
+					try {
+						// Extract admin user data from headers
+						let user = request.headers.get('X-User');
+						user = JSON.parse(user);
+						const userId = user.id;
+						const is_admin = await isAdmin(userId, env);
+
+						// Ensure the requester is an admin
+						if (!is_admin) {
+							console.error('Unauthorized user tried:', userId);
+							return new Response(
+								JSON.stringify({ message: 'Unauthorized: Admin access required' }),
+								{ status: 403, headers: { ...corsHeaders } }
+							);
+						}
+
+						// Fetch filter parameters
+						const searchKeyword = params.get('search');
+						const senderLocation = params.get('senderLocation');
+						const receiverLocation = params.get('receiverLocation');
+						const minAge = params.get('minAge');
+						const maxAge = params.get('maxAge');
+						const userType = params.get('userType');
+						const minMessageCount = params.get('minMessageCount');
+						const maxMessageCount = params.get('maxMessageCount');
+						const cntUser = params.get('cntUser')
+
+
+						// Fetch sorting parameters
+						const sortBy = params.get('sortBy'); // Field to sort by (e.g., 'created_at', 'last_updated_at', 'message_count')
+						const sortDirection = params.get('sortDirection'); // Sorting direction ('asc' or 'desc')
+						const filterUserId = params.get('userId');
+
+						let query = `
+							SELECT
+								threads.thread_id,
+								threads.thread_title,
+								threads.sender,
+								threads.receiver,
+								threads.created_at,
+								threads.last_updated_at,
+								sender_user.username AS sender_username,
+								sender_user.profile_picture AS sender_profile_picture,
+								sender_user.ubicacion AS sender_location,
+								sender_user.age AS sender_age,
+								sender_user.user_type AS sender_user_type,
+								receiver_user.username AS receiver_username,
+								receiver_user.profile_picture AS receiver_profile_picture,
+								receiver_user.ubicacion AS receiver_location,
+								receiver_user.age AS receiver_age,
+								receiver_user.user_type AS receiver_user_type,
+								COUNT(messages.message_id) AS message_count
+							FROM threads
+							LEFT JOIN users AS sender_user ON threads.sender = sender_user.id
+							LEFT JOIN users AS receiver_user ON threads.receiver = receiver_user.id
+							LEFT JOIN messages ON threads.thread_id = messages.thread_id
+							WHERE 1=1
+						`;
+
+
+						// Add non-aggregate filters to the WHERE clause
+						const queryParams = [];
+
+						if (searchKeyword) {
+							query += ' AND threads.thread_title LIKE ?';
+							queryParams.push(`%${searchKeyword}%`);
+						}
+
+						if (senderLocation) {
+							query += ' AND sender_user.ubicacion = ?';
+							queryParams.push(senderLocation);
+						}
+
+						if (receiverLocation) {
+							query += ' AND receiver_user.ubicacion = ?';
+							queryParams.push(receiverLocation);
+						}
+
+						if (minAge) {
+							query += ' AND (sender_user.age >= ? OR receiver_user.age >= ?)';
+							queryParams.push(minAge, minAge);
+						}
+
+						if (maxAge) {
+							query += ' AND (sender_user.age <= ? OR receiver_user.age <= ?)';
+							queryParams.push(maxAge, maxAge);
+						}
+
+						if (userType) {
+							query += ' AND (sender_user.user_type = ? OR receiver_user.user_type = ?)';
+							queryParams.push(userType, userType);
+						}
+
+						if (filterUserId) {
+							query += ' AND (threads.sender = ? OR threads.receiver = ?)';
+							queryParams.push(filterUserId, filterUserId);
+						}
+
+						if (cntUser) {
+							//console.log('got cnt user')
+							//query += " AND users.cnt_user = ?";
+							query += ' AND (sender_user.cnt_user = ? OR receiver_user.cnt_user = ?)';
+							queryParams.push(cntUser, cntUser);
+
+						}
+
+						// Group by thread ID to ensure correct aggregation
+						query += ' GROUP BY threads.thread_id';
+
+						// Add aggregate filters to the HAVING clause
+						let havingClause = '';
+						if (minMessageCount) {
+							havingClause += ' AND COUNT(messages.message_id) >= ?';
+							queryParams.push(parseInt(minMessageCount));
+						}
+
+						if (maxMessageCount) {
+							havingClause += ' AND COUNT(messages.message_id) <= ?';
+							queryParams.push(parseInt(maxMessageCount));
+						}
+
+						// Append the HAVING clause if there are aggregate filters
+						if (havingClause) {
+							query += ' HAVING 1=1' + havingClause;
+						}
+
+						// Add sorting
+						if (sortBy && sortDirection) {
+							const validSortFields = [
+								'created_at', 'last_updated_at', 'message_count'
+							];
+							if (validSortFields.includes(sortBy)) {
+								if (sortBy === 'created_at') {
+									query += ` ORDER BY threads.${sortBy} ${sortDirection === 'desc' ? 'DESC' : 'ASC'}`;
+								} else {
+									query += ` ORDER BY ${sortBy} ${sortDirection === 'desc' ? 'DESC' : 'ASC'}`;
+								}
+
+							}
+						}
+
+						// Execute the query
+						const results = await env.DB.prepare(query).bind(...queryParams).all();
+
+						// Return the response
+						return new Response(JSON.stringify({ data: results, query }), {
+							headers: {
+								'Content-Type': 'application/json',
+								...corsHeaders,
+							},
+						});
+					} catch (error) {
+						console.error('Error fetching threads:', error.message);
+						return new Response(
+							JSON.stringify({ message: 'Error fetching threads', details: error.message, query }),
+							{ status: 500, headers: { ...corsHeaders } }
+						);
+					}
+				}
+
+				if (pathname === '/api/ad/user/threads') {
+					try {
+						let user = request.headers.get('X-User');
+						const userId = params.get('userId');
+
+						user = JSON.parse(user);
+						const adminId = user.id;
+						const is_admin = await isAdmin(adminId, env);
+
+						// Ensure the requester is an admin
+						if (!is_admin) {
+							console.error('Unauthorized user tried:', adminId);
+							return new Response(
+								JSON.stringify({ message: 'Unauthorized: Admin access required' }),
+								{ status: 403, headers: { ...corsHeaders } }
+							);
+						}
+
+						const query = `
+							SELECT
+								t.thread_id,
+								t.sender,
+								sender_user.username AS sender_name,
+								sender_user.profile_picture AS sender_profile_picture,
+								t.receiver,
+								receiver_user.username AS receiver_name,
+								receiver_user.profile_picture AS receiver_profile_picture,
+								t.last_updated_at,
+								m.content AS last_message,
+								last_message_user.username AS last_message_owner,
+								(SELECT COUNT(*) FROM messages WHERE thread_id = t.thread_id) AS message_count
+							FROM threads t
+							LEFT JOIN messages m
+								ON t.thread_id = m.thread_id
+								AND m.created_at = (
+									SELECT MAX(created_at) FROM messages WHERE thread_id = t.thread_id
+								)
+							LEFT JOIN users sender_user
+								ON t.sender = sender_user.id
+							LEFT JOIN users receiver_user
+								ON t.receiver = receiver_user.id
+							LEFT JOIN users last_message_user
+								ON m.message_owner = last_message_user.id
+							WHERE t.sender = ? OR t.receiver = ?
+							ORDER BY t.last_updated_at DESC;
+						`;
+
+						const results = await env.DB.prepare(query).bind(userId, userId).all();
+
+						const response = new Response(JSON.stringify(results.results), {
+							headers: {
+								...corsHeaders,
+							},
+						});
+
+						return response;
+					} catch (error) {
+						console.error('Error fetching threads:', error);
+						return new Response('Internal Server Error', { status: 500, headers: { ...corsHeaders } });
+					}
+				}
+
+
+				if (pathname === "/api/ad/thread") {
+
+					try {
+
+						let user = request.headers.get('X-User');
+						user = JSON.parse(user);
+						const userId = user.id;
+						const is_admin = await isAdmin(userId, env);
+
+						// Ensure the requester is an admin
+						if (!is_admin) {
+							console.error('Unauthorized user tried:', userId);
+							return new Response(
+								JSON.stringify({ message: 'Unauthorized ' }),
+								{ status: 403, headers: { ...corsHeaders } }
+							);
+						}
+
+						const threadId = params.get("id");
+						if (!threadId) {
+							console.error('No thread ID');
+							return new Response('No thread ID', { status: 400, headers: { ...corsHeaders } });
+						}
+
+						// Verify if the user belongs to the thread
+						const { results: thread } = await env.DB.prepare(`
+							SELECT sender, receiver
+							FROM threads
+							WHERE thread_id = ?
+						`).bind(threadId).all();
+
+						if (!thread.length) {
+							console.error('No threads');
+							return new Response('No threads', { status: 400, headers: { ...corsHeaders } });
+						}
+
+						// Fetch messages and user details
+						const { results: messages } = await env.DB.prepare(`
+							SELECT
+								m.message_id,
+								m.content,
+								m.created_at,
+								m.message_owner,
+								u1.username AS sender_username,
+								u1.id AS sender_id,
+								u1.profile_picture AS sender_profile_picture,
+								u2.username AS receiver_username,
+								u2.id AS receiver_id,
+								u2.profile_picture AS receiver_profile_picture
+							FROM messages m
+							JOIN threads t ON m.thread_id = t.thread_id
+							JOIN users u1 ON t.sender = u1.id
+							JOIN users u2 ON t.receiver = u2.id
+							WHERE m.thread_id = ?
+							ORDER BY m.created_at ASC
+						`).bind(threadId).all();
+
+						const response = new Response(JSON.stringify({ messages }), {
+							headers: {
+								...corsHeaders, // Cache for 10 minutes
+							},
+						});
+
+						return response;
+					} catch (error) {
+						console.error(error);
+						console.error("Error:", error.message);
+						return new Response(JSON.stringify({ error: error.message }), { status: 400, headers: { ...corsHeaders } });
+					}
+				}
+
+				if (pathname === '/api/ad/stats') {
+					try {
+						// Authenticate the user
+						let user = request.headers.get('X-User');
+						user = JSON.parse(user);
+						const userId = user.id;
+						const is_admin = await isAdmin(userId, env);
+
+						const cache = caches.default;
+						let cacheKey = new Request(request.url); // Unique cache key per request
+						let cachedResponse = await cache.match(cacheKey);
+
+						if (cachedResponse) {
+							console.log("Cache hit: Serving cached response");
+							return cachedResponse;
+						}
+
+						if (!is_admin) {
+							console.error('Unauthorized user tried to access stats:', userId);
+							return new Response(
+								JSON.stringify({ message: 'Unauthorized access' }),
+								{ status: 403, headers: { ...corsHeaders } }
+							);
+						}
+
+						// Query to count total users, products, threads, and reports
+						const query = `
+							SELECT
+								(SELECT COUNT(*) FROM users) AS total_users,
+								(SELECT COUNT(*) FROM products) AS total_products,
+								(SELECT COUNT(*) FROM threads) AS total_threads,
+								(SELECT COUNT(*) FROM reports) AS total_reports
+						`;
+
+						// Execute the query
+						const result = await env.DB.prepare(query).first();
+
+						// Return the response
+						let response= new Response(JSON.stringify({ data: result }), {
+							headers: {
+								'Content-Type': 'application/json',
+								...corsHeaders,
+							},
+						});
+
+						await cache.put(cacheKey, response.clone());
+
+						return response;
+
+					} catch (error) {
+						console.error('Error fetching stats:', error.message);
+						return new Response(
+							JSON.stringify({ message: 'Error fetching stats', details: error.message }),
+							{ status: 500, headers: { ...corsHeaders } }
+						);
+					}
+				}
+
+				if (pathname === '/api/ad/cnt-users') {
+					try {
+
+						let user = request.headers.get('X-User');
+						user = JSON.parse(user);
+						const userId = user.id;
+						const is_admin = await isAdmin(userId, env)
+
+						if (!is_admin) {
+							console.error('unathorized user tried', userId)
+							return new Response(
+								JSON.stringify({ message: 'Error fetching users' }),
+								{ status: 500, headers: { ...corsHeaders } }
+							);
+
+						}
+
+						const searchKeyword = params.get('search');
+						// Fetch filter parameters
 						const location = params.get('ubicacion');
 						const minAge = params.get('minAge');
 						const maxAge = params.get('maxAge');
 						const verified = params.get('verified');
-						const isBanned = params.get('isBanned');
-						const minReportedByUser = params.get('minReportedByUser');
-						const maxReportedByUser = params.get('maxReportedByUser');
-						const minReportedUser = params.get('minReportedUser');
-						const maxReportedUser = params.get('maxReportedUser');
-						const minBlockedBy = params.get('minBlockedBy');
-						const maxBlockedBy = params.get('maxBlockedBy');
-						const minBlockedUser = params.get('minBlockedUser');
-						const maxBlockedUser = params.get('maxBlockedUser');
 
-						console.log('minreportedby ', minReportedByUser)
+						const minThreadsCount = params.get('minThreadsCount');
+						const maxThreadsCount = params.get('maxThreadsCount');
+						const minProductsCount = params.get('minProductsCount');
+						const maxProductsCount = params.get('maxProductsCount');
 
-						// Build query
+
+						// Fetch sorting parameters
+						const sortBy = params.get('sortBy'); // Field to sort by (e.g., 'age', 'created_at', 'reported_by_user_count')
+						const sortDirection = params.get('sortDirection'); // Sorting direction ('asc' or 'desc')
+
+						// Build the base query
 						let query = `
 							SELECT
 								users.id,
@@ -2417,18 +2949,24 @@ export default {
 								users.ubicacion,
 								users.age,
 								users.created_at,
-								users.is_banned,
-								users.banned_until,
 								users.verified,
-								(SELECT COUNT(*) FROM reports WHERE reports.reporter_id = users.id) AS reported_by_user_count,
-								(SELECT COUNT(*) FROM reports WHERE reports.reported_id = users.id) AS reported_user_count,
-								(SELECT COUNT(*) FROM blocked_users WHERE blocked_users.blocked_user = users.id) AS blocked_by_count,
-								(SELECT COUNT(*) FROM blocked_users WHERE blocked_users.blocked_by = users.id) AS blocked_user_count
+								COUNT(DISTINCT products.id) AS product_count, -- Count of products for sellers
+								COUNT(DISTINCT threads.thread_id) AS thread_count -- Count of threads where the user is the sender or receiver
 							FROM users
+							LEFT JOIN products ON products.user_id = users.id AND users.user_type = 'seller' -- Products for sellers
+							LEFT JOIN threads ON threads.sender = users.id OR threads.receiver = users.id -- Threads where the user is the sender or receiver
 							WHERE 1=1
+							AND users.cnt_user = 1
 						`;
 
+						// Add non-aggregate filters to the WHERE clause
 						const queryParams = [];
+
+						if (searchKeyword) {
+							query += ' AND users.profile_description LIKE ?';
+							queryParams.push(`%${searchKeyword}%`);
+						}
+
 						if (location) {
 							query += ' AND users.ubicacion = ?';
 							queryParams.push(location);
@@ -2445,50 +2983,57 @@ export default {
 							query += ' AND users.verified = ?';
 							queryParams.push(verified === 'true' ? 1 : 0);
 						}
-						if (isBanned) {
-							query += ' AND users.is_banned = ?';
-							queryParams.push(isBanned === '1' ? 1 : 0);
+
+						// Group by user ID to ensure correct aggregation
+						query += ' GROUP BY users.id';
+
+						// Add aggregate filters to the HAVING clause
+						let havingClause = '';
+
+						if (minThreadsCount) {
+							havingClause += ' AND COUNT(DISTINCT threads.thread_id) >= ?';
+							queryParams.push(parseInt(minThreadsCount));
 						}
-						if (minReportedByUser) {
-							console.log('got it inside minreportedby ', minReportedByUser)
-							//query += ` AND (SELECT COUNT(*) FROM reports WHERE reports.reporter_id = users.id) >= ?`;
-							query +=' AND reported_by_user_count >= ?'
-							queryParams.push(parseInt(minReportedByUser));
+						if (maxThreadsCount) {
+							havingClause += ' AND COUNT(DISTINCT threads.thread_id) <= ?';
+							queryParams.push(parseInt(maxThreadsCount));
 						}
-						if (maxReportedByUser) {
-							query += ` AND (SELECT COUNT(*) FROM reports WHERE reports.reporter_id = users.id) <= ?`;
-							queryParams.push(maxReportedByUser);
+						if (minProductsCount) {
+							havingClause += ' AND COUNT(DISTINCT products.id) >= ?';
+							queryParams.push(parseInt(minProductsCount));
 						}
-						if (minReportedUser) {
-							query += ` AND (SELECT COUNT(*) FROM reports WHERE reports.reported_id = users.id) >= ?`;
-							queryParams.push(minReportedUser);
-						}
-						if (maxReportedUser) {
-							query += ` AND (SELECT COUNT(*) FROM reports WHERE reports.reported_id = users.id) <= ?`;
-							queryParams.push(maxReportedUser);
-						}
-						if (minBlockedBy) {
-							query += ` AND (SELECT COUNT(*) FROM blocked_users WHERE blocked_users.blocked_user = users.id) >= ?`;
-							queryParams.push(minBlockedBy);
-						}
-						if (maxBlockedBy) {
-							query += ` AND (SELECT COUNT(*) FROM blocked_users WHERE blocked_users.blocked_user = users.id) <= ?`;
-							queryParams.push(maxBlockedBy);
-						}
-						if (minBlockedUser) {
-							query += ` AND (SELECT COUNT(*) FROM blocked_users WHERE blocked_users.blocked_by = users.id) >= ?`;
-							queryParams.push(minBlockedUser);
-						}
-						if (maxBlockedUser) {
-							query += ` AND (SELECT COUNT(*) FROM blocked_users WHERE blocked_users.blocked_by = users.id) <= ?`;
-							queryParams.push(maxBlockedUser);
+						if (maxProductsCount) {
+							havingClause += ' AND COUNT(DISTINCT products.id) <= ?';
+							queryParams.push(parseInt(maxProductsCount));
 						}
 
-						// Execute query
+						// Append the HAVING clause if there are aggregate filters
+						if (havingClause) {
+							query += ' HAVING 1=1' + havingClause;
+						}
+
+						// Add sorting
+						if (sortBy && sortDirection) {
+							const validSortFields = [
+								'age', 'created_at', 'product_count', 'thread_count'
+							];
+							if (validSortFields.includes(sortBy)) {
+								if (sortBy === 'product_count' || sortBy === 'thread_count') {
+
+									console.log('hitt reported_by_user_count', sortBy)
+									query += ` ORDER BY ${sortBy} ${sortDirection === 'desc' ? 'DESC' : 'ASC'}`;
+								} else {
+									query += ` ORDER BY users.${sortBy} ${sortDirection === 'desc' ? 'DESC' : 'ASC'}`;
+								}
+
+							}
+						}
+
+						// Execute the query
 						const results = await env.DB.prepare(query).bind(...queryParams).all();
 
-						// Return response
-						return new Response(JSON.stringify({ data: results, query:query }), {
+						// Return the response
+						return new Response(JSON.stringify({ data: results, query }), {
 							headers: {
 								'Content-Type': 'application/json',
 								...corsHeaders,
@@ -2497,11 +3042,14 @@ export default {
 					} catch (error) {
 						console.error('Error fetching users:', error.message);
 						return new Response(
-							JSON.stringify({ message: 'Error fetching users', details: error.message }),
+							JSON.stringify({ message: 'Error fetching users', details: error.message, query }),
 							{ status: 500, headers: { ...corsHeaders } }
 						);
 					}
-				}*/
+				}
+
+
+
 
 
 
